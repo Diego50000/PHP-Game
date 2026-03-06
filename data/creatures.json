@@ -1,0 +1,158 @@
+{
+  "creatures": [
+    {
+      "name": "Bubbleshell",
+      "type": "Water",
+      "category": "starter",
+      "hp": 70,
+      "attack": 50,
+      "defense": 60,
+      "sp_defense": 55,
+      "speed": 40,
+      "description": "A shy turtle-like creature that shoots pressurised water from its shell vents."
+    },
+    {
+      "name": "Leafroot",
+      "type": "Grass",
+      "category": "starter",
+      "hp": 90,
+      "attack": 45,
+      "defense": 55,
+      "sp_defense": 50,
+      "speed": 35,
+      "description": "A stout plant creature whose roots double as powerful whips."
+    },
+    {
+      "name": "Flarepounce",
+      "type": "Fire",
+      "category": "starter",
+      "hp": 55,
+      "attack": 65,
+      "defense": 40,
+      "sp_defense": 45,
+      "speed": 70,
+      "description": "A swift fox-like creature that ignites its tail before every pounce."
+    },
+    {
+      "name": "Sparkpup",
+      "type": "Electric",
+      "category": "rival",
+      "hp": 65,
+      "attack": 55,
+      "defense": 45,
+      "sp_defense": 50,
+      "speed": 60,
+      "description": "A scrappy electric pup that crackles with static whenever it gets excited."
+    },
+    {
+      "name": "Pebblebug",
+      "type": "Bug",
+      "category": "wild_zone1",
+      "hp": 45,
+      "attack": 35,
+      "defense": 40,
+      "sp_defense": 30,
+      "speed": 30,
+      "description": "A beetle-like creature that hides under rocks and launches pebbles at intruders."
+    },
+    {
+      "name": "Windfuzz",
+      "type": "Flying",
+      "category": "wild_zone1",
+      "hp": 50,
+      "attack": 40,
+      "defense": 30,
+      "sp_defense": 35,
+      "speed": 65,
+      "description": "A fluffy bird creature that rides updrafts and drops seeds like tiny bombs."
+    },
+    {
+      "name": "Thornmole",
+      "type": "Grass",
+      "category": "wild_zone1",
+      "hp": 60,
+      "attack": 38,
+      "defense": 50,
+      "sp_defense": 42,
+      "speed": 25,
+      "description": "A burrowing mole covered in sharp thorns. Tunnels up beneath unsuspecting travellers."
+    },
+    {
+      "name": "Glowgrub",
+      "type": "Bug",
+      "category": "wild_zone1",
+      "hp": 40,
+      "attack": 42,
+      "defense": 28,
+      "sp_defense": 32,
+      "speed": 48,
+      "description": "A bioluminescent larva that flashes blinding light when threatened."
+    },
+    {
+      "name": "Frostbite",
+      "type": "Ice",
+      "category": "wild_zone2",
+      "hp": 70,
+      "attack": 58,
+      "defense": 52,
+      "sp_defense": 55,
+      "speed": 38,
+      "description": "A crystalline wolf whose fangs flash blue before delivering a freezing bite."
+    },
+    {
+      "name": "Cragback",
+      "type": "Rock",
+      "category": "wild_zone2",
+      "hp": 90,
+      "attack": 62,
+      "defense": 75,
+      "sp_defense": 40,
+      "speed": 20,
+      "description": "A slow tortoise whose shell is made of compressed mountain granite."
+    },
+    {
+      "name": "Shiverspark",
+      "type": "Electric",
+      "category": "wild_zone2",
+      "hp": 60,
+      "attack": 70,
+      "defense": 38,
+      "sp_defense": 45,
+      "speed": 80,
+      "description": "A jagged electric lizard that slides across icy surfaces at terrifying speed."
+    },
+    {
+      "name": "Glaciwing",
+      "type": "Ice",
+      "category": "wild_zone2",
+      "hp": 65,
+      "attack": 55,
+      "defense": 44,
+      "sp_defense": 60,
+      "speed": 62,
+      "description": "A moth-like creature with frost-dusted wings that scatter ice powder mid-flight."
+    },
+    {
+      "name": "Boulderfist",
+      "type": "Rock",
+      "category": "wild_zone2",
+      "hp": 80,
+      "attack": 72,
+      "defense": 68,
+      "sp_defense": 35,
+      "speed": 28,
+      "description": "A knuckle-dragging brute that punches boulders for fun. Its fists are harder than steel."
+    },
+    {
+      "name": "Embershard",
+      "type": "Fire",
+      "category": "wild_zone2",
+      "hp": 62,
+      "attack": 68,
+      "defense": 42,
+      "sp_defense": 50,
+      "speed": 58,
+      "description": "A volcanic gecko that sheds flaming scales as armour chips off during battle."
+    }
+  ]
+}
