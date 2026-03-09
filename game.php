@@ -1,2651 +1,1462 @@
-<?php
-// 1. Start the session
-session_start();
-
-// ── HELPER: XP needed to reach next level ──────────────────────────────────
-function xpForLevel(int $level): int {
-    return $level * $level * 10; // L1→2: 10xp, L2→3: 40xp, L3→4: 90xp …
-}
-
-// ── HELPER: Award XP to a single creature slot in the team array ────────────
-function awardXP(array &$creature, int $xp): string {
-    if (!isset($creature['level']))    $creature['level']    = 1;
-    if (!isset($creature['xp']))       $creature['xp']       = 0;
-    if (!isset($creature['xp_next']))  $creature['xp_next']  = xpForLevel(1);
-
-    $creature['xp'] += $xp;
-    $msg = '';
-    while ($creature['xp'] >= $creature['xp_next']) {
-        $creature['xp']    -= $creature['xp_next'];
-        $creature['level'] += 1;
-        // Stat boosts on level-up
-        $creature['max_hp']  = round($creature['max_hp']  * 1.08);
-        $creature['hp']      = $creature['max_hp'];          // full heal on level-up
-        $creature['attack']  = round($creature['attack']  * 1.07);
-        $creature['defense'] = round($creature['defense'] * 1.06);
-        $creature['speed']   = round($creature['speed']   * 1.05);
-        $creature['xp_next'] = xpForLevel($creature['level']);
-        $msg .= "{$creature['name']} grew to Lv.{$creature['level']}! ";
-    }
-    return trim($msg);
-}
-
-// ── HELPER: Award XP to the active (index-0) team slot ─────────────────────
-function awardXPToActive(int $xp): string {
-    if (empty($_SESSION['team'])) return '';
-    $msg = awardXP($_SESSION['team'][0], $xp);
-    // Also update the shortcut session HP/attack so battle screens stay in sync
-    $_SESSION['my_hp']     = $_SESSION['team'][0]['hp'];
-    $_SESSION['my_max_hp'] = $_SESSION['team'][0]['max_hp'];
-    $_SESSION['my_attack'] = $_SESSION['team'][0]['attack'];
-    return $msg;
-}
-
-// ── HELPER: Get type-specific moves for a creature type ─────────────────────
-function getMovesForType(string $type): array {
-    $moves = [
-        'Grass' => [
-            'leafblade'  => ['name'=>'Leaf Blade',    'emoji'=>'🍃', 'mult'=>1.4, 'desc'=>'Sharp leaves slice the foe.',    'power'=>'★★★☆'],
-            'vinewhip'   => ['name'=>'Vine Whip',     'emoji'=>'🌿', 'mult'=>1.0, 'desc'=>'A fast whipping vine attack.',   'power'=>'★★☆☆'],
-            'solarbeam'  => ['name'=>'Solar Beam',    'emoji'=>'☀️',  'mult'=>2.0, 'desc'=>'Massive sun-powered blast.',     'power'=>'★★★★'],
-            'synthesis'  => ['name'=>'Synthesis',     'emoji'=>'💚', 'mult'=>0.5, 'desc'=>'Heals self, low damage.',        'power'=>'★☆☆☆'],
-        ],
-        'Water' => [
-            'watergun'   => ['name'=>'Water Gun',     'emoji'=>'💦', 'mult'=>1.0, 'desc'=>'A steady stream of water.',      'power'=>'★★☆☆'],
-            'hydropump'  => ['name'=>'Hydro Pump',    'emoji'=>'🌊', 'mult'=>2.0, 'desc'=>'Enormous torrent of water.',     'power'=>'★★★★'],
-            'aquajet'    => ['name'=>'Aqua Jet',      'emoji'=>'💨', 'mult'=>0.7, 'desc'=>'Strikes first, foe hits less.',  'power'=>'★☆☆☆'],
-            'bubblebeam' => ['name'=>'Bubble Beam',   'emoji'=>'🫧', 'mult'=>1.4, 'desc'=>'Bubbles slow the enemy.',        'power'=>'★★★☆'],
-        ],
-        'Fire' => [
-            'ember'      => ['name'=>'Ember',         'emoji'=>'🔥', 'mult'=>1.0, 'desc'=>'A small flame attack.',          'power'=>'★★☆☆'],
-            'flamethrower'=> ['name'=>'Flamethrower', 'emoji'=>'🌋', 'mult'=>1.4, 'desc'=>'Intense jet of fire.',           'power'=>'★★★☆'],
-            'fireblast'  => ['name'=>'Fire Blast',    'emoji'=>'💥', 'mult'=>2.0, 'desc'=>'A massive explosion of fire.',   'power'=>'★★★★'],
-            'quickflame' => ['name'=>'Quick Flame',   'emoji'=>'⚡', 'mult'=>0.7, 'desc'=>'Fast strike, foe hits less.',    'power'=>'★☆☆☆'],
-        ],
-        'Electric' => [
-            'thundershock'=> ['name'=>'Thundershock', 'emoji'=>'⚡', 'mult'=>1.0, 'desc'=>'A jolt of electricity.',         'power'=>'★★☆☆'],
-            'thunderbolt' => ['name'=>'Thunderbolt',  'emoji'=>'🌩️', 'mult'=>1.4, 'desc'=>'A powerful electric strike.',   'power'=>'★★★☆'],
-            'thunder'     => ['name'=>'Thunder',      'emoji'=>'🌪️', 'mult'=>2.0, 'desc'=>'Massive lightning storm.',      'power'=>'★★★★'],
-            'quickcharge' => ['name'=>'Quick Charge', 'emoji'=>'💨', 'mult'=>0.7, 'desc'=>'Fast zap, foe hits less.',       'power'=>'★☆☆☆'],
-        ],
-        'Bug' => [
-            'bugbite'    => ['name'=>'Bug Bite',      'emoji'=>'🐛', 'mult'=>1.0, 'desc'=>'A chomping bite attack.',        'power'=>'★★☆☆'],
-            'xscissor'   => ['name'=>'X-Scissor',     'emoji'=>'✂️',  'mult'=>1.4, 'desc'=>'Slashing cross-cut attack.',    'power'=>'★★★☆'],
-            'bugbuzz'    => ['name'=>'Bug Buzz',      'emoji'=>'📳', 'mult'=>2.0, 'desc'=>'Sonic vibration wave.',          'power'=>'★★★★'],
-            'stringshot' => ['name'=>'String Shot',   'emoji'=>'🕸️', 'mult'=>0.7, 'desc'=>'Slows enemy, low damage.',      'power'=>'★☆☆☆'],
-        ],
-        'Flying' => [
-            'gust'       => ['name'=>'Gust',          'emoji'=>'🌬️', 'mult'=>1.0, 'desc'=>'A sharp gust of wind.',         'power'=>'★★☆☆'],
-            'airslash'   => ['name'=>'Air Slash',     'emoji'=>'🦅', 'mult'=>1.4, 'desc'=>'Razor-sharp air blade.',         'power'=>'★★★☆'],
-            'hurricane'  => ['name'=>'Hurricane',     'emoji'=>'🌀', 'mult'=>2.0, 'desc'=>'A raging wind storm.',           'power'=>'★★★★'],
-            'quickwind'  => ['name'=>'Quick Wind',    'emoji'=>'💨', 'mult'=>0.7, 'desc'=>'Swift strike, foe hits less.',   'power'=>'★☆☆☆'],
-        ],
-        'Rock' => [
-            'rockthrow'  => ['name'=>'Rock Throw',   'emoji'=>'🪨', 'mult'=>1.0, 'desc'=>'Hurls a sharp boulder.',          'power'=>'★★☆☆'],
-            'rockslide'  => ['name'=>'Rock Slide',   'emoji'=>'🏔️', 'mult'=>1.4, 'desc'=>'Raining rocks hit hard.',         'power'=>'★★★☆'],
-            'stoneedge'  => ['name'=>'Stone Edge',   'emoji'=>'💎', 'mult'=>2.0, 'desc'=>'Jagged stone critical strike.',    'power'=>'★★★★'],
-            'rollout'    => ['name'=>'Rollout',       'emoji'=>'⚪', 'mult'=>0.7, 'desc'=>'Defensive roll, foe hits less.',  'power'=>'★☆☆☆'],
-        ],
-        'Ice' => [
-            'iceshard'   => ['name'=>'Ice Shard',    'emoji'=>'🧊', 'mult'=>1.0, 'desc'=>'Fast frozen fragment.',           'power'=>'★★☆☆'],
-            'icebeam'    => ['name'=>'Ice Beam',     'emoji'=>'❄️',  'mult'=>1.4, 'desc'=>'Freezing concentrated beam.',    'power'=>'★★★☆'],
-            'blizzard'   => ['name'=>'Blizzard',     'emoji'=>'🌨️', 'mult'=>2.0, 'desc'=>'Devastating snowstorm.',         'power'=>'★★★★'],
-            'frostbreath'=> ['name'=>'Frost Breath', 'emoji'=>'💨', 'mult'=>0.7, 'desc'=>'Chilling gust, foe hits less.',   'power'=>'★☆☆☆'],
-        ],
-    ];
-        'tackle'  => ['name'=>'Tackle',        'emoji'=>'⚡', 'mult'=>1.0, 'desc'=>'A basic body slam.',        'power'=>'★★☆☆'],
-        'slam'    => ['name'=>'Slam',           'emoji'=>'💥', 'mult'=>1.5, 'desc'=>'Heavy blow.',               'power'=>'★★★☆'],
-        'quick'   => ['name'=>'Quick Hit',      'emoji'=>'💨', 'mult'=>0.7, 'desc'=>'Fast, foe hits less.',      'power'=>'★☆☆☆'],
-        'special' => ['name'=>'Special Blast',  'emoji'=>'✨', 'mult'=>2.0, 'desc'=>'Massive power — risky!',    'power'=>'★★★★'],
-    ];
-}
-
-// ── HELPER: Resolve a move key against a type's moveset ─────────────────────
-function resolveMove(string $moveKey, string $type): array {
-    $moves = getMovesForType($type);
-    return $moves[$moveKey] ?? array_values($moves)[0];
-}
-
-// ── HELPER: Sync session my_hp/my_attack from team slot 0 ───────────────────
-function syncActiveFromTeam(): void {
-    if (!empty($_SESSION['team'])) {
-        $_SESSION['my_hp']     = $_SESSION['team'][0]['hp'];
-        $_SESSION['my_max_hp'] = $_SESSION['team'][0]['max_hp'];
-        $_SESSION['my_attack'] = $_SESSION['team'][0]['attack'];
-        $_SESSION['my_type']   = $_SESSION['team'][0]['type'];
-    }
-}
-
-// ── HELPER: Build a fresh team-member array from a creature data row ────────
-function makeTeamMember(array $c): array {
-    return [
-        'name'    => $c['name'],
-        'type'    => $c['type'],
-        'hp'      => $c['hp'],
-        'max_hp'  => $c['hp'],
-        'attack'  => $c['attack'],
-        'defense' => $c['defense'],
-        'speed'   => $c['speed'],
-        'level'   => 1,
-        'xp'      => 0,
-        'xp_next' => xpForLevel(1),
-    ];
-}
-
-// 1. Restart
-if (isset($_POST['restart'])) {
-    session_unset();
-    $_SESSION['zone'] = 0;
-}
-
-// 2. Login
-if (isset($_POST['playerName'])) {
-    $_SESSION['playerName'] = $_POST['playerName'];
-    $_SESSION['difficulty'] = $_POST['difficulty'];
-    $_SESSION['zone'] = 0;
-    if (!isset($_SESSION['team']))  $_SESSION['team']  = [];
-    if (!isset($_SESSION['balls'])) $_SESSION['balls'] = 5;
-}
-
-// 3. Load JSON
-$jsonData = file_get_contents('data/creatures.json');
-$creaturesData = json_decode($jsonData, true);
-
-// 4. Starter chosen → add to team as level-1 member
-if (isset($_POST['starter'])) {
-    $_SESSION['starter'] = $_POST['starter'];
-    $_SESSION['zone'] = 'rival_dialogue';
-
-    // Build starter team entry
-    foreach ($creaturesData['creatures'] as $c) {
-        if ($c['category'] === 'starter' && strtolower($c['type']) === $_POST['starter']) {
-            if (empty($_SESSION['team'])) {
-                $_SESSION['team'][] = makeTeamMember($c);
-            }
-            break;
-        }
-    }
-}
-
-// 5. Start rival battle
-if (isset($_POST['start_rival_battle'])) {
-    $_SESSION['zone'] = 'rival_battle';
-    foreach ($creaturesData['creatures'] as $creature) {
-        if ($creature['category'] == 'starter' && strtolower($creature['type']) == $_SESSION['starter']) {
-            $_SESSION['my_max_hp'] = !empty($_SESSION['team']) ? $_SESSION['team'][0]['max_hp'] : $creature['hp'];
-            $_SESSION['my_hp']     = $_SESSION['my_max_hp'];
-            $_SESSION['my_attack'] = !empty($_SESSION['team']) ? $_SESSION['team'][0]['attack'] : $creature['attack'];
-        }
-        if ($creature['category'] == 'rival') {
-            $_SESSION['rival_max_hp'] = $creature['hp'];
-            $_SESSION['rival_hp']     = $creature['hp'];
-            $_SESSION['rival_attack'] = $creature['attack'];
-        }
-    }
-    $_SESSION['battle_message'] = "The battle has begun! Choose your move!";
-    $_SESSION['level_up_msg'] = '';
-    syncActiveFromTeam();
-}
-
-// 6. Rival battle attack
-if (isset($_POST['attack_rival'])) {
-    $move = $_POST['move'] ?? '';
-    $activeType = $_SESSION['my_type'] ?? ($_SESSION['team'][0]['type'] ?? 'Normal');
-    $chosen = resolveMove($move, $activeType);
-    $damageToRival = max(1, round(($_SESSION['my_attack'] / 3) * $chosen['mult']));
-    $isQuick = ($chosen['mult'] <= 0.75);
-    $counterMult = $isQuick ? 0.5 : 1.0;
-    $damageToMe   = max(1, round(($_SESSION['rival_attack'] / 3) * $counterMult));
-    $_SESSION['last_move'] = $chosen['name'];
-    $_SESSION['rival_hp'] -= $damageToRival;
-    $_SESSION['level_up_msg'] = '';
-
-    if ($_SESSION['rival_hp'] <= 0) {
-        $_SESSION['rival_hp'] = 0;
-        $lvMsg = awardXPToActive(30);
-        $_SESSION['level_up_msg'] = $lvMsg;
-        $_SESSION['battle_message'] = "You used {$chosen['emoji']} {$chosen['name']} for $damageToRival damage! You defeated Sparkpup! (+30 XP)" . ($lvMsg ? " 🎉 $lvMsg" : '');
-    } else {
-        $_SESSION['my_hp'] -= $damageToMe;
-        $_SESSION['battle_message'] = "You used {$chosen['emoji']} {$chosen['name']} for $damageToRival damage! Sparkpup fought back for $damageToMe damage!";
-        if ($_SESSION['my_hp'] <= 0) {
-            $_SESSION['my_hp'] = 0;
-            $_SESSION['battle_message'] = "Oh no! Your creature fainted. Game Over!";
-        }
-    }
-    if (!empty($_SESSION['team'])) $_SESSION['team'][0]['hp'] = $_SESSION['my_hp'];
-}
-
-// 7. Finish rival battle
-if (isset($_POST['finish_rival_battle'])) {
-    $_SESSION['zone'] = 1;
-    $_SESSION['last_map_zone'] = 1;
-}
-
-// 8. Wild encounter starts
-if (isset($_POST['wild_encounter'])) {
-    $_SESSION['zone'] = 'battle';
-    $currentZone = $_SESSION['prev_battle_zone'] ?? ($_SESSION['zone'] == 'battle' ? ($_SESSION['last_map_zone'] ?? 1) : 1);
-    // Use last_map_zone to know which zone the encounter came from
-    $zoneCategory = 'wild_zone' . ($_SESSION['last_map_zone'] ?? 1);
-    $wildPool = array_values(array_filter($creaturesData['creatures'], function($c) use ($zoneCategory) { return $c['category'] === $zoneCategory; }));
-    if (empty($wildPool)) {
-        $wildPool = array_values(array_filter($creaturesData['creatures'], function($c) { return $c['category'] === 'wild_zone1'; }));
-    }
-    $picked = $wildPool[array_rand($wildPool)];
-    $_SESSION['wild_name']       = $picked['name'];
-    $_SESSION['wild_type']       = $picked['type'];
-    $_SESSION['wild_max_hp']     = $picked['hp'];
-    $_SESSION['wild_hp']         = $picked['hp'];
-    $_SESSION['wild_attack']     = $picked['attack'];
-    $_SESSION['wild_defense']    = $picked['defense'];
-    $_SESSION['wild_speed']      = $picked['speed'];
-    if (!isset($_SESSION['balls'])) $_SESSION['balls'] = 5;
-    if (!isset($_SESSION['team']))  $_SESSION['team']  = [];
-    $_SESSION['wild_battle_msg'] = "A wild {$picked['name']} appeared! What will you do?";
-    $_SESSION['wild_caught']     = false;
-    $_SESSION['wild_fled']       = false;
-    $_SESSION['level_up_msg']    = '';
-    syncActiveFromTeam();
-}
-
-// 9. Wild attack
-if (isset($_POST['wild_attack'])) {
-    $move = $_POST['move'] ?? '';
-    $activeType = $_SESSION['my_type'] ?? ($_SESSION['team'][0]['type'] ?? 'Normal');
-    $chosen = resolveMove($move, $activeType);
-    $dmgToWild = max(1, round(($_SESSION['my_attack'] / 3) * $chosen['mult']));
-    $isQuick = ($chosen['mult'] <= 0.75);
-    $counterMult = $isQuick ? 0.5 : 1.0;
-    $dmgToMe = max(1, round(($_SESSION['wild_attack'] / 3) * $counterMult));
-    $_SESSION['level_up_msg'] = '';
-    $_SESSION['wild_hp'] -= $dmgToWild;
-
-    if ($_SESSION['wild_hp'] <= 0) {
-        $_SESSION['wild_hp'] = 0;
-        if (!isset($_SESSION['kills'])) $_SESSION['kills'] = 0;
-        $_SESSION['kills']++;
-        $kills = $_SESSION['kills'];
-        $lvMsg = awardXPToActive(15);
-        $_SESSION['level_up_msg'] = $lvMsg;
-        $killNote = " ($kills/5 defeated)";
-        if ($kills >= 5 && !($_SESSION['trainer_unlocked'] ?? false)) {
-            $_SESSION['trainer_unlocked'] = true;
-            $killNote = " 🏆 5 defeated! Find the trainer on the map!";
-        }
-        $_SESSION['wild_battle_msg'] = "You used {$chosen['emoji']} {$chosen['name']} for $dmgToWild damage! Wild {$_SESSION['wild_name']} fainted! (+15 XP){$killNote}" . ($lvMsg ? " 🎉 $lvMsg" : '');
-    } else {
-        $_SESSION['my_hp'] -= $dmgToMe;
-        if (!empty($_SESSION['team'])) $_SESSION['team'][0]['hp'] = $_SESSION['my_hp'];
-        if ($_SESSION['my_hp'] <= 0) {
-            $_SESSION['my_hp'] = 0;
-            $_SESSION['wild_battle_msg'] = "You used {$chosen['emoji']} {$chosen['name']}! But {$_SESSION['wild_name']} hit back for $dmgToMe and your creature fainted!";
-        } else {
-            $_SESSION['wild_battle_msg'] = "You used {$chosen['emoji']} {$chosen['name']} for $dmgToWild damage! {$_SESSION['wild_name']} hit back for $dmgToMe!";
-        }
-    }
-}
-
-// 10. Throw ball
-if (isset($_POST['throw_ball'])) {
-    if (!isset($_SESSION['balls'])) $_SESSION['balls'] = 0;
-    $_SESSION['level_up_msg'] = '';
-    if ($_SESSION['balls'] > 0) {
-        $_SESSION['balls']--;
-        $hpRatio  = $_SESSION['wild_hp'] / $_SESSION['wild_max_hp'];
-        $catchRate = 0.25 + (1 - $hpRatio) * 0.55;
-        if (rand(1,100) <= ($catchRate * 100)) {
-            if (!isset($_SESSION['team'])) $_SESSION['team'] = [];
-            $newMember = makeTeamMember([
-                'name'    => $_SESSION['wild_name'],
-                'type'    => $_SESSION['wild_type'],
-                'hp'      => $_SESSION['wild_max_hp'],
-                'attack'  => $_SESSION['wild_attack'],
-                'defense' => $_SESSION['wild_defense'],
-                'speed'   => $_SESSION['wild_speed'],
-            ]);
-            $lvMsg = awardXP($newMember, 5); // tiny XP for catching
-            $_SESSION['team'][] = $newMember;
-            $_SESSION['wild_caught'] = true;
-            $_SESSION['wild_battle_msg'] = "Gotcha! {$_SESSION['wild_name']} was caught and added to your team! 🎉";
-        } else {
-            $dmgToMe = max(1, round($_SESSION['wild_attack'] / 4));
-            $_SESSION['my_hp'] = max(0, $_SESSION['my_hp'] - $dmgToMe);
-            if (!empty($_SESSION['team'])) $_SESSION['team'][0]['hp'] = $_SESSION['my_hp'];
-            $ballsLeft = $_SESSION['balls'];
-            $_SESSION['wild_battle_msg'] = "Oh no! {$_SESSION['wild_name']} broke free and hit you for $dmgToMe! ($ballsLeft balls left)";
-        }
-    } else {
-        $_SESSION['wild_battle_msg'] = "You're out of balls! Attack or run away!";
-    }
-}
-
-// 11. Run away
-if (isset($_POST['run_away'])) {
-    $_SESSION['zone'] = $_SESSION['last_map_zone'] ?? 1;
-    unset($_SESSION['wild_name'], $_SESSION['wild_type'], $_SESSION['wild_hp'],
-          $_SESSION['wild_max_hp'], $_SESSION['wild_attack'], $_SESSION['wild_defense'],
-          $_SESSION['wild_speed'], $_SESSION['wild_battle_msg'], $_SESSION['wild_caught'], $_SESSION['wild_fled']);
-}
-
-// 12. Leave battle
-if (isset($_POST['leave_battle'])) {
-    $_SESSION['zone'] = $_SESSION['last_map_zone'] ?? 1;
-    unset($_SESSION['wild_name'], $_SESSION['wild_type'], $_SESSION['wild_hp'],
-          $_SESSION['wild_max_hp'], $_SESSION['wild_attack'], $_SESSION['wild_defense'],
-          $_SESSION['wild_speed'], $_SESSION['wild_battle_msg'], $_SESSION['wild_caught'], $_SESSION['wild_fled']);
-}
-
-// 13. Trainer encounter — triggered from the map
-if (isset($_POST['trainer_encounter'])) {
-    if (!($_SESSION['trainer_unlocked'] ?? false)) {
-        $_SESSION['zone'] = $_SESSION['last_map_zone'] ?? 1;
-    } else {
-        $_SESSION['zone'] = 'trainer_battle';
-        $mapZone = $_SESSION['last_map_zone'] ?? 1;
-        if ($mapZone == 2) {
-            // Trainer Mira — tougher, Ice/Rock type
-            $_SESSION['trainer_name']       = 'Trainer Mira';
-            $_SESSION['trainer_creature']   = 'Frostclaw';
-            $_SESSION['trainer_emoji']      = '❄️';
-            $_SESSION['trainer_hp']         = 130;
-            $_SESSION['trainer_max_hp']     = 130;
-            $_SESSION['trainer_attack']     = 95;
-            $_SESSION['trainer_battle_msg'] = "Trainer Mira sends out Frostclaw! What will you do?";
-        } else {
-            // Trainer Rex — Zone 1
-            $_SESSION['trainer_name']       = 'Trainer Rex';
-            $_SESSION['trainer_creature']   = 'Emberfox';
-            $_SESSION['trainer_emoji']      = '🔥';
-            $_SESSION['trainer_hp']         = 90;
-            $_SESSION['trainer_max_hp']     = 90;
-            $_SESSION['trainer_attack']     = 75;
-            $_SESSION['trainer_battle_msg'] = "Trainer Rex sends out Emberfox! What will you do?";
-        }
-        $_SESSION['trainer_defeated'] = false;
-        $_SESSION['level_up_msg']     = '';
-        syncActiveFromTeam();
-    }
-}
-
-// 14. Trainer battle — attack
-if (isset($_POST['attack_trainer'])) {
-    $move = $_POST['move'] ?? '';
-    $activeType = $_SESSION['my_type'] ?? ($_SESSION['team'][0]['type'] ?? 'Normal');
-    $chosen = resolveMove($move, $activeType);
-    $dmgToTrainer = max(1, round(($_SESSION['my_attack'] / 3) * $chosen['mult']));
-    $isQuick = ($chosen['mult'] <= 0.75);
-    $counterMult = $isQuick ? 0.5 : 1.0;
-    $dmgToMe     = max(1, round(($_SESSION['trainer_attack'] / 3) * $counterMult));
-    $_SESSION['level_up_msg'] = '';
-    $_SESSION['trainer_hp'] -= $dmgToTrainer;
-
-    if ($_SESSION['trainer_hp'] <= 0) {
-        $_SESSION['trainer_hp'] = 0;
-        $_SESSION['trainer_defeated'] = true;
-        $lvMsg = awardXPToActive(50);
-        $_SESSION['level_up_msg'] = $lvMsg;
-        $tName = $_SESSION['trainer_creature'] ?? 'Emberfox';
-        $tTrainer = $_SESSION['trainer_name'] ?? 'the trainer';
-        $_SESSION['trainer_battle_msg'] = "You dealt $dmgToTrainer damage! $tName fainted! You beat $tTrainer! (+50 XP)" . ($lvMsg ? " 🎉 $lvMsg" : '');
-    } else {
-        $_SESSION['my_hp'] -= $dmgToMe;
-        if (!empty($_SESSION['team'])) $_SESSION['team'][0]['hp'] = $_SESSION['my_hp'];
-        $tName = $_SESSION['trainer_creature'] ?? 'Emberfox';
-        if ($_SESSION['my_hp'] <= 0) {
-            $_SESSION['my_hp'] = 0;
-            $_SESSION['trainer_battle_msg'] = "You dealt $dmgToTrainer damage but $tName hit back for $dmgToMe! Your creature fainted!";
-        } else {
-            $_SESSION['trainer_battle_msg'] = "You used {$chosen['emoji']} {$chosen['name']} for $dmgToTrainer damage! $tName hit back for $dmgToMe!";
-        }
-    }
-}
-
-// 15. Switch active creature during battle
-if (isset($_POST['switch_creature'])) {
-    $idx = (int)$_POST['switch_idx'];
-    if (isset($_SESSION['team'][$idx]) && $idx !== 0 && $_SESSION['team'][$idx]['hp'] > 0) {
-        // Swap chosen creature to slot 0
-        $tmp = $_SESSION['team'][0];
-        $_SESSION['team'][0] = $_SESSION['team'][$idx];
-        $_SESSION['team'][$idx] = $tmp;
-        syncActiveFromTeam();
-        $switched = $_SESSION['team'][0]['name'];
-        // Update the right battle message
-        $switchMsg = "You switched to {$switched}!";
-        if ($_SESSION['zone'] === 'battle') {
-            // Enemy gets a free hit when you switch
-            $freeDmg = max(1, round($_SESSION['wild_attack'] / 3));
-            $_SESSION['my_hp'] = max(0, $_SESSION['my_hp'] - $freeDmg);
-            $_SESSION['team'][0]['hp'] = $_SESSION['my_hp'];
-            $_SESSION['wild_battle_msg'] = "$switchMsg {$_SESSION['wild_name']} attacked for $freeDmg while you were switching!";
-        } elseif ($_SESSION['zone'] === 'trainer_battle') {
-            $freeDmg = max(1, round($_SESSION['trainer_attack'] / 3));
-            $_SESSION['my_hp'] = max(0, $_SESSION['my_hp'] - $freeDmg);
-            $_SESSION['team'][0]['hp'] = $_SESSION['my_hp'];
-            $_SESSION['trainer_battle_msg'] = "$switchMsg Emberfox attacked for $freeDmg while you were switching!";
-        } elseif ($_SESSION['zone'] === 'rival_battle') {
-            $freeDmg = max(1, round($_SESSION['rival_attack'] / 3));
-            $_SESSION['my_hp'] = max(0, $_SESSION['my_hp'] - $freeDmg);
-            $_SESSION['team'][0]['hp'] = $_SESSION['my_hp'];
-            $_SESSION['battle_message'] = "$switchMsg Sparkpup attacked for $freeDmg while you were switching!";
-        }
-    }
-}
-
-
-if (isset($_POST['advance_zone'])) {
-    $from = $_SESSION['last_map_zone'] ?? 1;
-    $next = $from + 1;
-    $_SESSION['zone'] = $next;
-    $_SESSION['last_map_zone'] = $next;
-    $_SESSION['kills'] = 0;
-    $_SESSION['trainer_unlocked'] = false;
-    $_SESSION['balls'] = ($_SESSION['balls'] ?? 0) + 5;
-    unset($_SESSION['trainer_hp'], $_SESSION['trainer_max_hp'], $_SESSION['trainer_attack'],
-          $_SESSION['trainer_battle_msg'], $_SESSION['trainer_defeated'], $_SESSION['trainer_name'],
-          $_SESSION['trainer_creature'], $_SESSION['trainer_emoji']);
-}
-
-// 16. Open team screen
-if (isset($_POST['open_team'])) {
-    $_SESSION['prev_zone'] = $_SESSION['zone'];
-    $_SESSION['zone'] = 'team';
-}
-
-// 17. Close team screen
-if (isset($_POST['close_team'])) {
-    $_SESSION['zone'] = $_SESSION['prev_zone'] ?? 1;
-}
-?>
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Pokequest</title>
-  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PokéQuest</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Courier New',monospace;color:#fff;user-select:none;}
 
-    :root {
-      --bg: #1a1a2e;
-      --surface: rgba(255,255,255,0.04);
-      --border: rgba(255,255,255,0.08);
-      --text: #e0e0f0;
-      --muted: #6b7db3;
-      --accent: #7c3aed;
-      --accent2: #06b6d4;
-      --gold: #fbbf24;
-      --red: #ef4444;
-      --green: #22c55e;
-      --player-color: #06b6d4;
-      --rival-color: #ef4444;
-    }
+/* ── FULLSCREEN GAME WRAPPER ── */
+#gameWrapper{
+  position:fixed;inset:0;
+  display:flex;align-items:center;justify-content:center;
+  background:#000;
+}
+/* The canvas scales via JS transform-origin center */
+#gameCanvas{
+  display:block;
+  image-rendering:pixelated;
+  image-rendering:crisp-edges;
+  transform-origin:top left;
+  position:absolute;
+  top:0;left:0;
+}
+/* Inner overlay container that scales WITH the canvas */
+#gameScale{
+  position:absolute;
+  top:0;left:0;
+  width:480px;height:432px;
+  transform-origin:top left;
+  pointer-events:none;
+}
+#gameScale>*{pointer-events:auto;}
 
-    body {
-      background-color: var(--bg);
-      background-image:
-        radial-gradient(ellipse at 20% 50%, rgba(99,0,210,0.15) 0%, transparent 60%),
-        radial-gradient(ellipse at 80% 20%, rgba(0,180,216,0.12) 0%, transparent 50%);
-      min-height: 100vh;
-      font-family: 'Nunito', sans-serif;
-      color: var(--text);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 20px;
-    }
+/* HUD — pinned to bottom of screen, full width */
+#hud{
+  position:fixed;bottom:0;left:0;width:100%;
+  background:rgba(22,33,62,.97);border-top:3px solid #FFD700;
+  padding:5px 20px;display:flex;justify-content:space-around;
+  font-size:13px;z-index:100;
+}
+#hud span{color:#FFD700;}
 
-    /* --- HEADER BAR --- */
-    .hud {
-      width: 100%;
-      max-width: 640px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 28px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 10px 20px;
-      font-size: 13px;
-    }
+/* PARTY PANEL — floating right side */
+#partyPanel{
+  position:fixed;right:0;top:0;bottom:40px;
+  width:170px;
+  background:rgba(22,33,62,.96);
+  border-left:3px solid #FFD700;
+  padding:10px;overflow-y:auto;z-index:100;
+}
+#partyPanel h2{color:#FFD700;font-size:.85rem;margin-bottom:7px;text-align:center;letter-spacing:2px;border-bottom:2px solid #FFD70044;padding-bottom:5px;}
+.party-slot{background:#0f3460;border:2px solid #334;border-radius:7px;padding:6px;margin-bottom:5px;cursor:pointer;transition:border-color .2s,background .2s;position:relative;}
+.party-slot:hover{border-color:#FFD700;}
+.party-slot.active-lead{border-color:#4ade80;background:#0a2a1a;}
+.party-slot.empty{opacity:.3;cursor:default;border-style:dashed;display:flex;align-items:center;justify-content:center;font-size:10px;color:#555;min-height:40px;}
+.party-slot.empty:hover{border-color:#334;}
+.slot-header{display:flex;align-items:center;gap:4px;}
+.slot-emoji{font-size:1.2rem;}
+.slot-info{flex:1;min-width:0;}
+.slot-name{font-size:10px;font-weight:bold;color:#FFD700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.slot-level{font-size:9px;color:#aaa;}
+.slot-hp-wrap{background:#333;border-radius:3px;height:4px;margin-top:3px;overflow:hidden;}
+.slot-hp-bar{height:100%;border-radius:3px;transition:width .3s;}
+.slot-hp-text{font-size:8px;color:#aaa;margin-top:1px;}
+.lead-badge{position:absolute;top:2px;right:2px;background:#4ade80;color:#000;font-size:7px;padding:1px 3px;border-radius:2px;font-weight:bold;}
+#partyInfo{font-size:9px;color:#666;text-align:center;margin-top:4px;}
 
-    .hud-logo {
-      font-family: 'Press Start 2P', monospace;
-      font-size: 11px;
-      color: var(--gold);
-      text-shadow: 0 0 10px rgba(251,191,36,0.4);
-    }
+/* AREA BANNER */
+#areaBanner{position:absolute;top:0;left:0;width:100%;text-align:center;padding:10px 0;font-size:1rem;font-weight:bold;letter-spacing:3px;pointer-events:none;z-index:50;transition:opacity .5s;}
+#areaBanner.hidden{opacity:0;}
 
-    .hud-info { color: var(--muted); }
-    .hud-info strong { color: var(--text); }
+/* DIALOGUE BOX */
+#dialogueBox{display:none;position:absolute;bottom:0;left:0;width:100%;z-index:40;background:rgba(10,20,40,.97);border-top:3px solid #FFD700;padding:14px 18px 12px;}
+#dialogueBox.active{display:block;}
+#dialogueSpeaker{font-size:11px;color:#FFD700;font-weight:bold;letter-spacing:2px;margin-bottom:5px;}
+#dialogueText{font-size:13px;color:#eee;line-height:1.6;min-height:36px;}
+#dialoguePrompt{font-size:10px;color:#aaa;text-align:right;margin-top:6px;animation:blink 1s infinite;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:0;}}
 
-    /* --- CARD --- */
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: 32px;
-      width: 100%;
-      max-width: 560px;
-      backdrop-filter: blur(10px);
-      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
-    }
+.exclaim-wrap{position:absolute;pointer-events:none;z-index:35;}
+.exclaim{background:#FFD700;color:#000;font-size:11px;font-weight:bold;padding:2px 5px;border-radius:4px;white-space:nowrap;box-shadow:0 2px 6px #0006;}
 
-    h2 {
-      font-family: 'Press Start 2P', monospace;
-      font-size: 14px;
-      color: var(--gold);
-      text-shadow: 0 0 20px rgba(251,191,36,0.3);
-      margin-bottom: 20px;
-      line-height: 1.6;
-    }
+/* BATTLE SCREEN */
+#battleScreen{display:none;position:absolute;inset:0;flex-direction:column;align-items:center;justify-content:center;z-index:10;padding:12px;}
+#battleScreen.active{display:flex;}
+#battleBg{position:absolute;inset:0;z-index:0;}
+#battleContent{position:relative;z-index:1;width:100%;display:flex;flex-direction:column;align-items:center;}
+.battle-title{font-size:1.05rem;color:#FFD700;margin-bottom:6px;letter-spacing:2px;text-align:center;}
+#trainerStrip{display:none;width:100%;background:rgba(20,10,60,.85);border:2px solid #7c3aed;border-radius:7px;padding:4px 12px;margin-bottom:5px;text-align:center;font-size:11px;color:#c4b5fd;}
+#trainerStrip.active{display:block;}
+#trainerMonList{font-size:10px;color:#aaa;margin-top:2px;}
+.battle-area{display:flex;justify-content:space-around;width:100%;margin-bottom:6px;gap:8px;}
+.pokemon-card{background:rgba(22,33,62,.93);border:2px solid #FFD700;border-radius:8px;padding:7px 10px;text-align:center;flex:1;}
+.pokemon-sprite{font-size:2.2rem;margin-bottom:2px;}
+.pokemon-name{color:#FFD700;font-weight:bold;font-size:12px;}
+.pokemon-lvl{color:#aaa;font-size:10px;}
+.hp-bar-wrap{background:#333;border-radius:4px;height:8px;margin-top:3px;overflow:hidden;}
+.hp-bar{height:100%;border-radius:4px;transition:width .4s;}
+.hp-text{font-size:10px;color:#aaa;margin-top:2px;}
+.exp-bar-wrap{background:#1a1a3e;border-radius:3px;height:4px;margin-top:4px;overflow:hidden;border:1px solid #334;}
+.exp-bar{height:100%;border-radius:3px;background:linear-gradient(90deg,#60a5fa,#a78bfa);transition:width 0.6s ease;box-shadow:0 0 4px #60a5fa88;}
+.exp-label{font-size:9px;color:#60a5fa;margin-top:2px;letter-spacing:1px;}
+.battle-log{background:rgba(10,22,40,.93);border:2px solid #334;border-radius:6px;padding:6px 10px;width:100%;min-height:36px;font-size:12px;margin-bottom:5px;text-align:center;color:#ddd;line-height:1.5;}
+#battleTabs{display:flex;gap:4px;margin-bottom:5px;}
+.tab-btn{background:#1a1a3e;border:2px solid #334;border-radius:6px;padding:4px 8px;font-family:inherit;font-size:10px;color:#aaa;cursor:pointer;transition:all .15s;}
+.tab-btn.active,.tab-btn:hover{border-color:#FFD700;color:#FFD700;}
+.battle-panel{display:none;width:100%;}
+.battle-panel.active{display:flex;flex-wrap:wrap;gap:5px;justify-content:center;}
+.battle-btn{background:#1d3557;color:#fff;border:2px solid #334;border-radius:6px;padding:7px 12px;font-family:inherit;font-size:11px;cursor:pointer;font-weight:bold;transition:all .15s;min-width:95px;}
+.battle-btn:hover:not(:disabled){border-color:#FFD700;background:#2a4a7f;}
+.battle-btn:disabled{opacity:.3;cursor:default;}
+.battle-btn.flee-btn{background:#2a1a1a;border-color:#7f1d1d;}
+.battle-btn.flee-btn:hover:not(:disabled){background:#3f1f1f;border-color:#ef4444;}
+.battle-btn.catch-btn{background:#1a2a1a;border-color:#166534;}
+.battle-btn.catch-btn:hover:not(:disabled){background:#1e3a1e;border-color:#4ade80;}
+.switch-slot{background:#0f3460;border:2px solid #334;border-radius:6px;padding:5px 8px;cursor:pointer;display:flex;align-items:center;gap:7px;width:100%;transition:border-color .15s;margin-bottom:3px;font-size:11px;}
+.switch-slot:hover{border-color:#4ade80;}
+.switch-slot.fainted,.switch-slot.is-lead{opacity:.4;cursor:default;}
+.switch-slot.is-lead:hover,.switch-slot.fainted:hover{border-color:#334;}
 
-    p { line-height: 1.6; color: var(--muted); }
+#catchAnim{display:none;position:absolute;inset:0;background:rgba(0,0,0,.85);z-index:20;flex-direction:column;align-items:center;justify-content:center;font-size:3rem;}
+#catchAnim.active{display:flex;}
+#catchAnim p{font-size:12px;color:#aaa;margin-top:10px;}
 
-    /* --- BUTTONS --- */
-    .btn {
-      display: inline-block;
-      padding: 12px 24px;
-      border: none;
-      border-radius: 10px;
-      font-family: 'Press Start 2P', monospace;
-      font-size: 10px;
-      cursor: pointer;
-      transition: transform 0.15s, box-shadow 0.15s;
-      letter-spacing: 0.5px;
-    }
+#transitionOverlay{display:none;position:absolute;inset:0;background:#000;z-index:60;align-items:center;justify-content:center;flex-direction:column;gap:12px;}
+#transitionOverlay.active{display:flex;}
+#transitionText{font-size:1.2rem;color:#FFD700;letter-spacing:4px;text-align:center;}
+#transitionSub{font-size:.8rem;color:#aaa;letter-spacing:2px;}
 
-    .btn:hover { transform: translateY(-2px); }
-    .btn:active { transform: translateY(0); }
+/* NOTIF */
+#notif{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:#1a2a1a;border:2px solid #4ade80;border-radius:8px;padding:8px 18px;font-size:12px;color:#4ade80;z-index:300;display:none;box-shadow:0 4px 18px #4ade8044;max-width:360px;text-align:center;}
 
-    .btn-primary {
-      background: linear-gradient(135deg, var(--accent), #4f46e5);
-      color: white;
-      box-shadow: 0 4px 20px rgba(124,58,237,0.4);
-    }
-    .btn-primary:hover { box-shadow: 0 8px 28px rgba(124,58,237,0.5); }
+/* ── STARTER SCREEN ── */
+#starterScreen{
+  position:fixed;inset:0;background:#0d0d1a;z-index:999;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:20px;
+}
+#starterScreen h2{font-size:1.4rem;color:#FFD700;letter-spacing:4px;text-shadow:2px 2px 0 #e63946;}
+#starterScreen p{font-size:12px;color:#aaa;letter-spacing:1px;text-align:center;}
+#starterCards{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;}
+.starter-card{
+  background:#16213e;border:3px solid #334;border-radius:14px;
+  padding:20px 18px;text-align:center;cursor:pointer;
+  transition:border-color .2s,transform .2s,box-shadow .2s;
+  width:140px;position:relative;
+}
+.starter-card:hover{transform:translateY(-6px);}
+.starter-card.grass{border-color:#166534;}
+.starter-card.grass:hover{border-color:#4ade80;box-shadow:0 0 22px #4ade8066;}
+.starter-card.fire{border-color:#7f1d1d;}
+.starter-card.fire:hover{border-color:#ef4444;box-shadow:0 0 22px #ef444466;}
+.starter-card.water{border-color:#1e3a5f;}
+.starter-card.water:hover{border-color:#38bdf8;box-shadow:0 0 22px #38bdf866;}
+.starter-card.selected{transform:translateY(-8px) scale(1.04);}
+.starter-card.grass.selected{border-color:#4ade80;box-shadow:0 0 28px #4ade8088;}
+.starter-card.fire.selected{border-color:#ef4444;box-shadow:0 0 28px #ef444488;}
+.starter-card.water.selected{border-color:#38bdf8;box-shadow:0 0 28px #38bdf888;}
+.starter-sprite{font-size:3.2rem;margin-bottom:10px;display:block;}
+.starter-name{font-size:13px;font-weight:bold;margin-bottom:4px;}
+.starter-card.grass .starter-name{color:#4ade80;}
+.starter-card.fire .starter-name{color:#ef4444;}
+.starter-card.water .starter-name{color:#38bdf8;}
+.starter-type{font-size:10px;letter-spacing:2px;margin-bottom:8px;}
+.starter-card.grass .starter-type{color:#86efac;}
+.starter-card.fire .starter-type{color:#fca5a5;}
+.starter-card.water .starter-type{color:#7dd3fc;}
+.starter-desc{font-size:10px;color:#888;line-height:1.5;}
+.starter-stats{font-size:10px;color:#aaa;margin-top:8px;line-height:1.6;text-align:left;background:#0f1e3a;border-radius:6px;padding:6px 8px;}
+.starter-choose-btn{
+  background:#FFD700;color:#000;border:none;border-radius:8px;
+  padding:11px 36px;font-family:inherit;font-size:13px;font-weight:bold;
+  cursor:pointer;letter-spacing:2px;transition:transform .15s,box-shadow .2s;
+  display:none;
+}
+.starter-choose-btn.visible{display:block;}
+.starter-choose-btn:hover{transform:scale(1.05);box-shadow:0 0 20px #FFD70088;}
+#starterConfirm{font-size:12px;color:#666;min-height:16px;text-align:center;}
 
-    .btn-danger {
-      background: linear-gradient(135deg, var(--red), #b91c1c);
-      color: white;
-      box-shadow: 0 4px 20px rgba(239,68,68,0.35);
-    }
-
-    .btn-success {
-      background: linear-gradient(135deg, var(--green), #16a34a);
-      color: white;
-      box-shadow: 0 4px 20px rgba(34,197,94,0.35);
-    }
-
-    .btn-ghost {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      color: var(--text);
-    }
-    .btn-ghost:hover { border-color: var(--accent2); }
-
-    /* --- STARTER SELECTION --- */
-    .starter-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 14px;
-      margin: 20px 0;
-    }
-
-    .starter-option { position: relative; }
-    .starter-option input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
-
-    .starter-card {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 10px;
-      padding: 20px 10px;
-      border: 2px solid var(--border);
-      border-radius: 16px;
-      cursor: pointer;
-      transition: all 0.2s;
-      background: rgba(255,255,255,0.02);
-    }
-
-    .starter-card:hover { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.05); }
-
-    .starter-option input:checked + .starter-card {
-      border-color: var(--accent);
-      background: rgba(124,58,237,0.15);
-      box-shadow: 0 0 20px rgba(124,58,237,0.3);
-    }
-
-    .starter-emoji { font-size: 36px; }
-    .starter-name { font-family: 'Press Start 2P', monospace; font-size: 8px; color: var(--text); }
-
-    /* --- BATTLE LAYOUT --- */
-    .battle-arena {
-      display: grid;
-      grid-template-columns: 1fr 60px 1fr;
-      align-items: center;
-      gap: 10px;
-      margin: 20px 0;
-    }
-
-    .vs-badge {
-      font-family: 'Press Start 2P', monospace;
-      font-size: 10px;
-      color: var(--gold);
-      text-align: center;
-    }
-
-    .creature-card {
-      border-radius: 16px;
-      padding: 16px;
-      border: 2px solid;
-    }
-
-    .creature-card.mine { border-color: rgba(6,182,212,0.4); background: rgba(6,182,212,0.05); }
-    .creature-card.rival { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.05); }
-
-    .creature-card h3 {
-      font-family: 'Press Start 2P', monospace;
-      font-size: 9px;
-      margin-bottom: 12px;
-      line-height: 1.5;
-    }
-
-    .creature-card.mine h3 { color: var(--player-color); }
-    .creature-card.rival h3 { color: var(--rival-color); }
-
-    .hp-text {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--muted);
-      margin-bottom: 6px;
-    }
-
-    .hp-bar-wrap {
-      background: rgba(255,255,255,0.08);
-      border-radius: 999px;
-      height: 10px;
-      overflow: hidden;
-    }
-
-    .hp-bar {
-      height: 100%;
-      border-radius: 999px;
-      transition: width 0.5s ease;
-    }
-
-    .hp-bar.mine { background: linear-gradient(90deg, var(--player-color), #0284c7); }
-    .hp-bar.rival { background: linear-gradient(90deg, var(--rival-color), #dc2626); }
-
-    /* --- BATTLE MESSAGE BOX --- */
-    .battle-msg {
-      background: rgba(255,255,255,0.04);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--gold);
-      border-radius: 12px;
-      padding: 14px 18px;
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--text);
-      margin-bottom: 20px;
-    }
-
-    /* --- ATTACK MENU --- */
-    .attack-trigger-btn {
-      width: 100%;
-      padding: 14px;
-      background: linear-gradient(135deg, rgba(124,58,237,0.2), rgba(79,70,229,0.2));
-      border: 2px solid var(--accent);
-      border-radius: 12px;
-      color: white;
-      font-family: 'Press Start 2P', monospace;
-      font-size: 10px;
-      cursor: pointer;
-      letter-spacing: 1px;
-      transition: all 0.2s;
-    }
-
-    .attack-trigger-btn:hover {
-      background: linear-gradient(135deg, rgba(124,58,237,0.4), rgba(79,70,229,0.4));
-      box-shadow: 0 0 20px rgba(124,58,237,0.3);
-    }
-
-    /* Attack menu overlay */
-    .attack-menu-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.7);
-      backdrop-filter: blur(4px);
-      z-index: 100;
-      align-items: flex-end;
-      justify-content: center;
-      padding: 20px;
-    }
-
-    .attack-menu-overlay.open { display: flex; }
-
-    .attack-menu {
-      background: #16162a;
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 24px 24px 20px 20px;
-      padding: 28px;
-      width: 100%;
-      max-width: 500px;
-      animation: slideUp 0.25s ease;
-    }
-
-    @keyframes slideUp {
-      from { transform: translateY(40px); opacity: 0; }
-      to   { transform: translateY(0);    opacity: 1; }
-    }
-
-    .attack-menu h3 {
-      font-family: 'Press Start 2P', monospace;
-      font-size: 10px;
-      color: var(--gold);
-      margin-bottom: 18px;
-      text-align: center;
-    }
-
-    .moves-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-
-    .move-btn {
-      background: rgba(255,255,255,0.04);
-      border: 2px solid rgba(255,255,255,0.1);
-      border-radius: 14px;
-      padding: 14px 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-      text-align: left;
-      width: 100%;
-    }
-
-    .move-btn:hover {
-      border-color: var(--accent);
-      background: rgba(124,58,237,0.15);
-      transform: translateY(-2px);
-      box-shadow: 0 4px 16px rgba(124,58,237,0.25);
-    }
-
-    .move-emoji { font-size: 24px; display: block; margin-bottom: 6px; }
-
-    .move-name {
-      font-family: 'Press Start 2P', monospace;
-      font-size: 8px;
-      color: var(--text);
-      display: block;
-      margin-bottom: 5px;
-    }
-
-    .move-desc {
-      font-size: 11px;
-      color: var(--muted);
-      line-height: 1.4;
-    }
-
-    .move-power {
-      font-size: 10px;
-      font-weight: 800;
-      color: var(--gold);
-      margin-top: 4px;
-    }
-
-    .cancel-btn {
-      width: 100%;
-      padding: 12px;
-      background: transparent;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      color: var(--muted);
-      font-family: 'Nunito', sans-serif;
-      font-size: 14px;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .cancel-btn:hover { border-color: rgba(255,255,255,0.2); color: var(--text); }
-
-    /* --- ZONE 1 GRID --- */
-    #game-board {
-      display: grid;
-      grid-template-columns: repeat(5, 58px);
-      grid-template-rows: repeat(5, 58px);
-      gap: 3px;
-      background: #0f172a;
-      border: 2px solid var(--border);
-      border-radius: 12px;
-      padding: 6px;
-      margin: 20px 0;
-    }
-
-    .tile {
-      width: 58px;
-      height: 58px;
-      background-color: #1a4731;
-      border-radius: 6px;
-      transition: background-color 0.1s;
-    }
-
-    .player {
-      background: radial-gradient(circle, #06b6d4, #0284c7) !important;
-      border-radius: 50%;
-      box-shadow: 0 0 12px rgba(6,182,212,0.6);
-    }
-
-    /* --- DIALOGUE --- */
-    .dialogue-box {
-      background: rgba(255,255,255,0.04);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 20px 24px;
-      margin: 20px 0;
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--text);
-      line-height: 1.7;
-    }
-
-    .dialogue-box strong { color: var(--player-color); }
-
-    /* --- FORMS --- */
-    form { margin-top: 0; }
-  </style>
+@keyframes starterFadeOut{
+  0%{opacity:1;transform:scale(1);}
+  100%{opacity:0;transform:scale(1.08);}
+}
+#starterScreen.fade-out{animation:starterFadeOut .5s forwards;}
+</style>
 </head>
 <body>
 
-  <div class="hud">
-    <span class="hud-logo">⚡ PQ</span>
-    <span class="hud-info">
-      <strong><?php echo isset($_SESSION['playerName']) ? htmlspecialchars($_SESSION['playerName']) : 'Guest'; ?></strong>
-      &nbsp;·&nbsp; Zone: <strong><?php echo isset($_SESSION['zone']) ? $_SESSION['zone'] : '0'; ?></strong>
-      &nbsp;·&nbsp; 🟡 <strong><?php echo $_SESSION['balls'] ?? 0; ?></strong>
-    </span>
-    <?php if (!empty($_SESSION['team']) && !in_array($_SESSION['zone'] ?? '', ['team', 0, 'rival_dialogue'])): ?>
-    <form action="game.php" method="POST" style="margin:0;">
-      <input type="hidden" name="open_team" value="true">
-      <button type="submit" style="background:rgba(251,191,36,0.15);border:1px solid rgba(251,191,36,0.4);color:#fbbf24;font-family:'Nunito',sans-serif;font-size:12px;font-weight:800;padding:5px 14px;border-radius:20px;cursor:pointer;transition:all 0.2s;">
-        🎒 Team (<?php echo count($_SESSION['team']); ?>)
-      </button>
-    </form>
-    <?php endif; ?>
-  </div>
+<!-- ══ STARTER SELECTION SCREEN ══ -->
+<div id="starterScreen">
+  <h2>⚡ PokéQuest</h2>
+  <p>Welcome to the world of Pokémon!<br>Professor Oak has a gift for you — choose your first partner!</p>
+  <div id="starterCards">
 
-  <?php
-  // Objective progress bar — show during zone 1 and battle screens
-  $showObjective = in_array($_SESSION['zone'] ?? '', [1, 'battle', 'trainer_battle', 2]);
-  if ($showObjective):
-    $kills = $_SESSION['kills'] ?? 0;
-    $trainerUnlocked = $_SESSION['trainer_unlocked'] ?? false;
-    $killsPct = min(100, round($kills / 5 * 100));
-  ?>
-  <div style="width:100%;max-width:560px;margin-bottom:14px;">
-    <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:10px 16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <span style="font-family:'Press Start 2P',monospace;font-size:8px;color:var(--gold);">
-          <?php if ($trainerUnlocked): ?>⚠️ Find Trainer Rex!<?php else: ?>🎯 Defeat <?php echo 5 - $kills; ?> more wild creatures<?php endif; ?>
-        </span>
-        <span style="font-size:11px;font-weight:800;color:var(--muted);"><?php echo $kills; ?>/5</span>
+    <div class="starter-card grass" onclick="selectStarter('leafling')">
+      <span class="starter-sprite">🌿</span>
+      <div class="starter-name">LEAFLING</div>
+      <div class="starter-type">🌿 GRASS TYPE</div>
+      <div class="starter-desc">A gentle sprout with<br>a nurturing spirit.</div>
+      <div class="starter-stats">
+        ❤️ HP: High<br>
+        ⚔️ ATK: Medium<br>
+        🛡️ DEF: High<br>
+        ✨ Moves: Vine Whip,<br>&nbsp;&nbsp;Razor Leaf, Tackle, Growl
       </div>
-      <div style="background:rgba(255,255,255,0.07);border-radius:999px;height:7px;overflow:hidden;">
-        <div style="height:100%;border-radius:999px;width:<?php echo $killsPct; ?>%;background:<?php echo $trainerUnlocked ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : 'linear-gradient(90deg,#22c55e,#06b6d4)'; ?>;transition:width 0.5s;"></div>
-      </div>
-      <?php if ($trainerUnlocked): ?>
-        <div style="font-size:11px;color:#f59e0b;margin-top:5px;font-weight:700;">Walk to the ⚔️ trainer tile to battle Trainer Rex!</div>
-      <?php endif; ?>
-    </div>
-  </div>
-  <?php endif; ?>
-
-  <div class="card">
-    <?php
-    // --- ZONE 0: CHOOSE STARTER SCREEN ---
-    if ($_SESSION['zone'] == 0) {
-    ?>
-      <h2>Choose Your Starter</h2>
-      <p>Pick the creature that will join you on your journey.</p>
-
-      <form action="game.php" method="POST">
-        <div class="starter-grid">
-          <div class="starter-option">
-            <input type="radio" id="grass" name="starter" value="grass" required>
-            <label class="starter-card" for="grass">
-              <span class="starter-emoji">🌱</span>
-              <span class="starter-name">Grass</span>
-            </label>
-          </div>
-          <div class="starter-option">
-            <input type="radio" id="water" name="starter" value="water">
-            <label class="starter-card" for="water">
-              <span class="starter-emoji">💧</span>
-              <span class="starter-name">Water</span>
-            </label>
-          </div>
-          <div class="starter-option">
-            <input type="radio" id="fire" name="starter" value="fire">
-            <label class="starter-card" for="fire">
-              <span class="starter-emoji">🔥</span>
-              <span class="starter-name">Fire</span>
-            </label>
-          </div>
-        </div>
-        <button class="btn btn-primary" type="submit" style="width:100%;">Confirm Starter →</button>
-      </form>
-
-    <?php
-    }
-    // --- RIVAL DIALOGUE ---
-    elseif ($_SESSION['zone'] == 'rival_dialogue') {
-    ?>
-      <h2>Watch Out! ⚠️</h2>
-      <div class="dialogue-box">
-        "Hey, <strong><?php echo htmlspecialchars($_SESSION['playerName']); ?></strong>! I see you just got your first creature. Let's see who is stronger!"
-      </div>
-      <form action="game.php" method="POST">
-        <input type="hidden" name="start_rival_battle" value="true">
-        <button class="btn btn-danger" type="submit" style="width:100%;">⚔️ Accept Battle!</button>
-      </form>
-
-    <?php
-    }
-    // --- RIVAL BATTLE ---
-    elseif ($_SESSION['zone'] == 'rival_battle') {
-
-        $myCreature = null;
-        $rivalCreature = null;
-
-        foreach ($creaturesData['creatures'] as $creature) {
-            if ($creature['category'] == 'starter' && strtolower($creature['type']) == $_SESSION['starter']) {
-                $myCreature = $creature;
-            }
-            if ($creature['category'] == 'rival') {
-                $rivalCreature = $creature;
-            }
-        }
-
-        $myHpPct   = max(0, round(($_SESSION['my_hp'] / $_SESSION['my_max_hp']) * 100));
-        $rivHpPct  = max(0, round(($_SESSION['rival_hp'] / $_SESSION['rival_max_hp']) * 100));
-    ?>
-      <h2>Rival Battle!</h2>
-
-      <div class="battle-msg"><?php echo htmlspecialchars($_SESSION['battle_message']); ?></div>
-
-      <div class="battle-arena">
-        <div class="creature-card mine">
-          <h3>Your<br><?php echo htmlspecialchars($myCreature['name']); ?></h3>
-          <div class="hp-text"><?php echo $_SESSION['my_hp']; ?> / <?php echo $_SESSION['my_max_hp']; ?> HP</div>
-          <div class="hp-bar-wrap">
-            <div class="hp-bar mine" style="width:<?php echo $myHpPct; ?>%"></div>
-          </div>
-        </div>
-
-        <div class="vs-badge">VS</div>
-
-        <div class="creature-card rival">
-          <h3>Rival<br><?php echo htmlspecialchars($rivalCreature['name']); ?></h3>
-          <div class="hp-text"><?php echo $_SESSION['rival_hp']; ?> / <?php echo $_SESSION['rival_max_hp']; ?> HP</div>
-          <div class="hp-bar-wrap">
-            <div class="hp-bar rival" style="width:<?php echo $rivHpPct; ?>%"></div>
-          </div>
-        </div>
-      </div>
-
-      <?php if ($_SESSION['rival_hp'] <= 0) { ?>
-
-        <form action="game.php" method="POST">
-          <input type="hidden" name="finish_rival_battle" value="true">
-          <button class="btn btn-success" type="submit" style="width:100%;">🏆 Victory! Enter Zone 1</button>
-        </form>
-
-      <?php } elseif ($_SESSION['my_hp'] <= 0) { ?>
-
-        <form action="game.php" method="POST">
-          <input type="hidden" name="restart" value="true">
-          <button class="btn btn-danger" type="submit" style="width:100%;">💀 Game Over — Restart</button>
-        </form>
-
-      <?php } else {
-        $rivalActiveType = $_SESSION['my_type'] ?? ($_SESSION['team'][0]['type'] ?? 'Grass');
-        $rivalTypeMoves  = getMovesForType($rivalActiveType);
-        $teMap = ['Bug'=>'🐛','Flying'=>'🦅','Fire'=>'🔥','Water'=>'💧','Grass'=>'🌿','Electric'=>'⚡','Normal'=>'🐾','Rock'=>'🪨'];
-      ?>
-
-        <div style="display:flex;gap:10px;margin-bottom:10px;">
-          <!-- Attack Trigger -->
-          <button class="attack-trigger-btn" style="flex:1;" onclick="document.getElementById('attackMenu').classList.add('open')">
-            ⚔️ Attack
-          </button>
-          <?php if (count($_SESSION['team'] ?? []) > 1): ?>
-          <button class="btn btn-ghost" style="flex:1;" onclick="document.getElementById('rivalSwitchOverlay').classList.add('open')">
-            🔄 Switch
-          </button>
-          <?php endif; ?>
-        </div>
-
-        <!-- TYPE-BASED Attack Menu -->
-        <div class="attack-menu-overlay" id="attackMenu">
-          <div class="attack-menu">
-            <h3><?php echo $teMap[$rivalActiveType] ?? '⚔️'; ?> <?php echo $rivalActiveType; ?> Moves</h3>
-            <div class="moves-grid">
-              <?php foreach ($rivalTypeMoves as $key => $m): ?>
-                <form action="game.php" method="POST">
-                  <input type="hidden" name="attack_rival" value="true">
-                  <input type="hidden" name="move" value="<?php echo htmlspecialchars($key); ?>">
-                  <button class="move-btn" type="submit">
-                    <span class="move-emoji"><?php echo $m['emoji']; ?></span>
-                    <span class="move-name"><?php echo htmlspecialchars($m['name']); ?></span>
-                    <span class="move-desc"><?php echo htmlspecialchars($m['desc']); ?></span>
-                    <div class="move-power">Power: <?php echo $m['power']; ?></div>
-                  </button>
-                </form>
-              <?php endforeach; ?>
-            </div>
-            <button class="cancel-btn" onclick="document.getElementById('attackMenu').classList.remove('open')">Cancel</button>
-          </div>
-        </div>
-
-        <!-- SWITCH overlay for rival battle -->
-        <?php if (count($_SESSION['team'] ?? []) > 1): ?>
-        <div id="rivalSwitchOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);z-index:100;align-items:flex-end;justify-content:center;padding:20px;">
-          <div class="attack-menu" style="max-width:500px;">
-            <h3>🔄 Switch Creature</h3>
-            <p style="font-size:11px;color:#f59e0b;margin-bottom:14px;text-align:center;">⚠️ Sparkpup gets a free hit when you switch!</p>
-            <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
-              <?php foreach ($_SESSION['team'] as $si => $sm):
-                if ($si === 0) continue;
-                $se = $teMap[$sm['type']] ?? '❓';
-                $shp = $sm['max_hp'] > 0 ? round($sm['hp']/$sm['max_hp']*100) : 0;
-                $sc = $shp > 50 ? '#22c55e' : ($shp > 25 ? '#f59e0b' : '#ef4444');
-                $fainted = $sm['hp'] <= 0;
-              ?>
-                <form action="game.php" method="POST" style="margin:0;">
-                  <input type="hidden" name="switch_creature" value="true">
-                  <input type="hidden" name="switch_idx" value="<?php echo $si; ?>">
-                  <button type="submit" style="width:100%;background:rgba(255,255,255,<?php echo $fainted?'0.02':'0.05';?>);border:1.5px solid rgba(255,255,255,<?php echo $fainted?'0.06':'0.15';?>);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:<?php echo $fainted?'not-allowed':'pointer';?>;opacity:<?php echo $fainted?'0.4':'1';?>;" <?php if($fainted) echo 'disabled'; ?>>
-                    <span style="font-size:28px;"><?php echo $se; ?></span>
-                    <div style="flex:1;text-align:left;">
-                      <div style="font-family:'Press Start 2P',monospace;font-size:9px;color:var(--text);margin-bottom:5px;"><?php echo htmlspecialchars($sm['name']); ?> <span style="color:var(--muted);">Lv.<?php echo $sm['level']??1; ?></span></div>
-                      <div style="font-size:10px;color:var(--muted);margin-bottom:4px;"><?php echo $sm['type']; ?> — <?php echo $sm['hp']; ?>/<?php echo $sm['max_hp']; ?> HP</div>
-                      <div style="background:rgba(255,255,255,0.07);border-radius:999px;height:5px;overflow:hidden;"><div style="height:100%;border-radius:999px;width:<?php echo $shp;?>%;background:<?php echo $sc;?>;"></div></div>
-                    </div>
-                    <?php echo $fainted ? '<span style="color:var(--red);font-size:12px;font-weight:700;">FAINTED</span>' : '<span style="color:var(--green);font-size:18px;">→</span>'; ?>
-                  </button>
-                </form>
-              <?php endforeach; ?>
-            </div>
-            <button class="cancel-btn" onclick="document.getElementById('rivalSwitchOverlay').classList.remove('open')">Cancel</button>
-          </div>
-        </div>
-        <style>#rivalSwitchOverlay.open { display: flex !important; }</style>
-        <?php endif; ?>
-
-      <?php } ?>
-
-
-    <?php
-    }
-    // --- ZONE 1: 2D TOP-DOWN MAP ---
-    elseif ($_SESSION['zone'] == 1) {
-    ?>
-      <style>
-        #zone1-wrap {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 12px;
-        }
-        #gameCanvas {
-          border: 3px solid rgba(255,255,255,0.12);
-          border-radius: 12px;
-          image-rendering: pixelated;
-          box-shadow: 0 0 40px rgba(34,197,94,0.15);
-          display: block;
-        }
-        #zone-hud {
-          width: 480px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          font-size: 12px;
-          color: var(--muted);
-        }
-        #zone-hud span strong { color: var(--green); }
-        #controls-hint {
-          font-size: 11px;
-          color: var(--muted);
-          text-align: center;
-          opacity: 0.7;
-        }
-        #battle-flash {
-          position: fixed;
-          inset: 0;
-          background: white;
-          z-index: 999;
-          opacity: 0;
-          pointer-events: none;
-          transition: opacity 0.08s;
-        }
-        #encounter-popup {
-          position: fixed;
-          inset: 0;
-          display: none;
-          align-items: center;
-          justify-content: center;
-          z-index: 998;
-          background: rgba(0,0,0,0.7);
-          backdrop-filter: blur(4px);
-        }
-        #encounter-popup.show { display: flex; }
-        #encounter-box {
-          background: #16162a;
-          border: 2px solid var(--green);
-          border-radius: 20px;
-          padding: 32px 40px;
-          text-align: center;
-          animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-          box-shadow: 0 0 40px rgba(34,197,94,0.3);
-        }
-        @keyframes popIn {
-          from { transform: scale(0.7); opacity: 0; }
-          to   { transform: scale(1);   opacity: 1; }
-        }
-        #encounter-box h3 {
-          font-family: 'Press Start 2P', monospace;
-          font-size: 12px;
-          color: var(--green);
-          margin-bottom: 10px;
-        }
-        #encounter-box p {
-          font-size: 14px;
-          margin-bottom: 24px;
-          color: var(--text);
-        }
-        .mob-sprite {
-          font-size: 52px;
-          margin-bottom: 16px;
-          animation: bounce 0.5s infinite alternate;
-          display: block;
-        }
-        @keyframes bounce {
-          from { transform: translateY(0); }
-          to   { transform: translateY(-8px); }
-        }
-      </style>
-
-      <div id="zone1-wrap">
-        <div id="zone-hud">
-          <span>🗺️ <strong>Zone 1: Grasslands</strong></span>
-          <span>Use <strong>Arrow Keys</strong> or <strong>WASD</strong> to move</span>
-        </div>
-
-        <canvas id="gameCanvas" width="480" height="480"></canvas>
-
-        <div id="controls-hint">Walk into tall grass 🌿 to encounter wild creatures! <?php if ($_SESSION['trainer_unlocked'] ?? false): ?><span style="color:#f59e0b;font-weight:800;">⚔️ Walk to Trainer Rex at the top!</span><?php endif; ?></div>
-      </div>
-
-      <!-- Battle flash overlay -->
-      <div id="battle-flash"></div>
-
-      <!-- Hidden trainer encounter form -->
-      <form id="trainer-form" action="game.php" method="POST" style="display:none;">
-        <input type="hidden" name="trainer_encounter" value="true">
-      </form>
-
-      <!-- Encounter popup -->
-      <div id="encounter-popup">
-        <div id="encounter-box">
-          <span class="mob-sprite" id="mob-emoji">❓</span>
-          <h3 id="encounter-name">Wild Creature!</h3>
-          <p id="encounter-type" style="font-size:11px;color:var(--accent2);font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;"></p>
-          <p id="encounter-text">A wild creature appeared!</p>
-          <div id="encounter-stats" style="display:flex;gap:14px;justify-content:center;margin-bottom:20px;font-size:12px;font-weight:700;color:var(--muted);"></div>
-          <form action="game.php" method="POST">
-            <input type="hidden" name="wild_encounter" value="true">
-            <button class="btn btn-danger" type="submit">⚔️ Battle!</button>
-          </form>
-        </div>
-      </div>
-
-      <form id="encounter-form" action="game.php" method="POST" style="display:none;">
-        <input type="hidden" name="wild_encounter" value="true">
-      </form>
-
-      <script>
-      (function() {
-        const TILE = 32;       // px per tile
-        const COLS = 15;
-        const ROWS = 15;
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-
-        // Tile type constants
-        const T = { PATH:0, GRASS:1, TALL:2, TREE:3, WATER:4, SAND:5, FLOWER:6, TRAINER:7 };
-
-        // Colours for each tile type
-        const TILE_COLOR = {
-          [T.PATH]:    '#8B7355',
-          [T.GRASS]:   '#4a7c40',
-          [T.TALL]:    '#2d5a27',
-          [T.TREE]:    '#1e3d1a',
-          [T.WATER]:   '#1e6b8c',
-          [T.SAND]:    '#c8a96e',
-          [T.FLOWER]:  '#4a7c40',
-          [T.TRAINER]: '#8B7355',
-        };
-
-        // Trainer tile position (centre of map, always visible)
-        const TRAINER_X = 7, TRAINER_Y = 1;
-        const trainerUnlocked = <?php echo json_encode((bool)($_SESSION['trainer_unlocked'] ?? false)); ?>;
-
-        // Map layout (15x15) — trainer at [1][7]
-        const MAP = [
-          [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
-          [3,0,0,0,0,0,0,0,0,0,0,0,0,0,3],
-          [3,0,2,2,2,1,1,1,1,1,2,2,2,0,3],
-          [3,0,2,3,2,1,6,1,6,1,2,3,2,0,3],
-          [3,0,2,2,2,1,1,1,1,1,2,2,2,0,3],
-          [3,0,1,1,1,0,0,0,0,0,1,1,1,0,3],
-          [3,0,1,6,1,0,5,5,5,0,1,6,1,0,3],
-          [3,0,1,1,1,0,5,4,5,0,1,1,1,0,3],
-          [3,0,1,6,1,0,5,5,5,0,1,6,1,0,3],
-          [3,0,1,1,1,0,0,0,0,0,1,1,1,0,3],
-          [3,0,2,2,2,1,1,1,1,1,2,2,2,0,3],
-          [3,0,2,3,2,1,6,1,6,1,2,3,2,0,3],
-          [3,0,2,2,2,1,1,1,1,1,2,2,2,0,3],
-          [3,0,0,0,0,0,0,0,0,0,0,0,0,0,3],
-          [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
-        ];
-
-        // Player state
-        let px = 7, py = 7;   // tile position
-        let facing = 'down';  // for sprite direction
-        let stepFrame = 0;    // walk animation frame (0 or 1)
-        let moving = false;
-        let moveTimer = 0;
-        const MOVE_DELAY = 150; // ms between moves
-        let lastMoveTime = 0;
-        const keys = {};
-
-        // Encounter control
-        let inEncounter = false;
-
-        const TYPE_EMOJI = {
-          'Bug':'🐛','Flying':'🦅','Fire':'🔥','Water':'💧',
-          'Grass':'🌿','Electric':'⚡','Normal':'🐾','Rock':'🪨',
-          'Ghost':'👻','Psychic':'🔮'
-        };
-
-        const WILD_CREATURES = <?php
-          $zone1 = array_values(array_filter($creaturesData['creatures'], function($c) {
-            return $c['category'] === 'wild_zone1';
-          }));
-          echo json_encode($zone1);
-        ?>;
-
-        // Camera (canvas is 480px = 15 tiles, map is 15 tiles — no scrolling needed at this size)
-        // If you want a bigger map, you'd add camera offset logic here.
-
-        function isWalkable(x, y) {
-          if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return false;
-          const t = MAP[y][x];
-          return t !== T.TREE && t !== T.WATER;
-        }
-
-        function isGrass(x, y) {
-          return MAP[y][x] === T.TALL;
-        }
-
-        // --- DRAWING ---
-        function drawTile(x, y) {
-          const t = MAP[y][x];
-          const px2 = x * TILE, py2 = y * TILE;
-          ctx.fillStyle = TILE_COLOR[t];
-          ctx.fillRect(px2, py2, TILE, TILE);
-
-          // Tile decorations
-          if (t === T.GRASS) {
-            // Subtle grass lines
-            ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(px2+6, py2+TILE); ctx.lineTo(px2+6, py2+TILE-8);
-            ctx.moveTo(px2+14, py2+TILE); ctx.lineTo(px2+14, py2+TILE-6);
-            ctx.moveTo(px2+22, py2+TILE); ctx.lineTo(px2+22, py2+TILE-9);
-            ctx.stroke();
-          }
-
-          if (t === T.TALL) {
-            // Tall grass — darker blades
-            ctx.fillStyle = '#1e4a1a';
-            for (let i = 0; i < 5; i++) {
-              const bx = px2 + 4 + i * 6;
-              const h = 8 + (i % 3) * 3;
-              ctx.fillRect(bx, py2 + TILE - h, 3, h);
-            }
-          }
-
-          if (t === T.TREE) {
-            // Tree trunk + canopy
-            ctx.fillStyle = '#5c3a1a';
-            ctx.fillRect(px2+12, py2+20, 8, 12);
-            ctx.fillStyle = '#1a5c14';
-            ctx.beginPath();
-            ctx.arc(px2+16, py2+14, 13, 0, Math.PI*2);
-            ctx.fill();
-            ctx.fillStyle = '#2d8a25';
-            ctx.beginPath();
-            ctx.arc(px2+12, py2+16, 8, 0, Math.PI*2);
-            ctx.fill();
-          }
-
-          if (t === T.WATER) {
-            ctx.fillStyle = '#2596be';
-            ctx.fillRect(px2, py2, TILE, TILE);
-            // Animated shimmer
-            const t2 = Date.now() / 800;
-            ctx.fillStyle = 'rgba(255,255,255,0.12)';
-            ctx.fillRect(px2+4 + Math.sin(t2)*3, py2+10, 10, 3);
-            ctx.fillRect(px2+16 + Math.cos(t2)*2, py2+20, 8, 2);
-          }
-
-          if (t === T.SAND) {
-            ctx.fillStyle = '#d4b483';
-            ctx.fillRect(px2, py2, TILE, TILE);
-          }
-
-          if (t === T.FLOWER) {
-            ctx.fillStyle = '#4a7c40';
-            ctx.fillRect(px2, py2, TILE, TILE);
-            // Little flower
-            ctx.fillStyle = '#f9d71c';
-            ctx.beginPath();
-            ctx.arc(px2+16, py2+16, 4, 0, Math.PI*2);
-            ctx.fill();
-            ctx.fillStyle = '#ff6b9d';
-            for (let a = 0; a < 5; a++) {
-              const angle = (a / 5) * Math.PI * 2;
-              ctx.beginPath();
-              ctx.arc(px2+16+Math.cos(angle)*6, py2+16+Math.sin(angle)*6, 3, 0, Math.PI*2);
-              ctx.fill();
-            }
-          }
-
-          if (t === T.PATH) {
-            // Subtle path texture
-            ctx.fillStyle = 'rgba(0,0,0,0.05)';
-            if ((x+y) % 2 === 0) ctx.fillRect(px2, py2, TILE, TILE);
-          }
-
-          // Grid lines (very subtle)
-          ctx.strokeStyle = 'rgba(0,0,0,0.08)';
-          ctx.lineWidth = 0.5;
-          ctx.strokeRect(px2, py2, TILE, TILE);
-        }
-
-        function drawPlayer() {
-          const x = px * TILE, y = py * TILE;
-          const bob = (stepFrame === 1 && moving) ? 1 : 0;
-
-          // Shadow
-          ctx.fillStyle = 'rgba(0,0,0,0.3)';
-          ctx.beginPath();
-          ctx.ellipse(x+16, y+30+bob, 8, 3, 0, 0, Math.PI*2);
-          ctx.fill();
-
-          // Body
-          ctx.fillStyle = '#3b82f6';
-          ctx.fillRect(x+9, y+16+bob, 14, 12);
-
-          // Head
-          ctx.fillStyle = '#fcd5b0';
-          ctx.beginPath();
-          ctx.arc(x+16, y+12+bob, 8, 0, Math.PI*2);
-          ctx.fill();
-
-          // Eyes based on direction
-          ctx.fillStyle = '#1e293b';
-          if (facing === 'down') {
-            ctx.fillRect(x+13, y+11+bob, 2, 2);
-            ctx.fillRect(x+17, y+11+bob, 2, 2);
-          } else if (facing === 'up') {
-            // Back of head — hair
-            ctx.fillStyle = '#92400e';
-            ctx.fillRect(x+9, y+6+bob, 14, 6);
-          } else if (facing === 'left') {
-            ctx.fillRect(x+11, y+11+bob, 2, 2);
-          } else if (facing === 'right') {
-            ctx.fillRect(x+19, y+11+bob, 2, 2);
-          }
-
-          // Hat
-          ctx.fillStyle = '#dc2626';
-          ctx.fillRect(x+8, y+7+bob, 16, 4);
-          ctx.fillRect(x+10, y+4+bob, 12, 4);
-
-          // Legs
-          ctx.fillStyle = '#1e3a5f';
-          const legOff = moving && stepFrame === 1 ? 2 : 0;
-          ctx.fillRect(x+10, y+28+bob, 5, 6+legOff);
-          ctx.fillRect(x+17, y+28+bob, 5, 6-legOff);
-        }
-
-        function drawTrainer() {
-          const tx = TRAINER_X * TILE, ty = TRAINER_Y * TILE;
-          const pulse = Math.sin(Date.now() / 400) * 0.5 + 0.5;
-
-          if (trainerUnlocked) {
-            // Glowing aura when unlocked
-            ctx.save();
-            ctx.shadowColor = '#f59e0b';
-            ctx.shadowBlur = 12 + pulse * 8;
-            ctx.fillStyle = 'rgba(245,158,11,0.25)';
-            ctx.beginPath();
-            ctx.arc(tx+16, ty+16, 18, 0, Math.PI*2);
-            ctx.fill();
-            ctx.restore();
-          }
-
-          // Trainer body (purple coat)
-          ctx.fillStyle = trainerUnlocked ? '#7c3aed' : '#4b5563';
-          ctx.fillRect(tx+9, ty+16, 14, 12);
-
-          // Head
-          ctx.fillStyle = '#fcd5b0';
-          ctx.beginPath();
-          ctx.arc(tx+16, ty+12, 8, 0, Math.PI*2);
-          ctx.fill();
-
-          // Hair (dark)
-          ctx.fillStyle = '#1e293b';
-          ctx.fillRect(tx+9, ty+5, 14, 7);
-
-          // Eyes
-          ctx.fillStyle = '#1e293b';
-          ctx.fillRect(tx+13, ty+11, 2, 2);
-          ctx.fillRect(tx+17, ty+11, 2, 2);
-
-          // Legs
-          ctx.fillStyle = '#374151';
-          ctx.fillRect(tx+10, ty+28, 5, 5);
-          ctx.fillRect(tx+17, ty+28, 5, 5);
-
-          // Label above NPC
-          ctx.font = 'bold 9px sans-serif';
-          ctx.textAlign = 'center';
-          if (trainerUnlocked) {
-            ctx.fillStyle = '#f59e0b';
-            ctx.fillText('⚔ REX', tx+16, ty-4);
-          } else {
-            ctx.fillStyle = 'rgba(255,255,255,0.35)';
-            ctx.fillText('REX', tx+16, ty-4);
-          }
-          ctx.textAlign = 'left';
-        }
-
-        function draw() {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          for (let y = 0; y < ROWS; y++) {
-            for (let x = 0; x < COLS; x++) {
-              drawTile(x, y);
-            }
-          }
-          drawTrainer();
-          drawPlayer();
-        }
-
-        // --- INPUT ---
-        document.addEventListener('keydown', e => { keys[e.key] = true; });
-        document.addEventListener('keyup',   e => { keys[e.key] = false; });
-
-        // --- GAME LOOP ---
-        function tryMove() {
-          if (inEncounter) return;
-          const now = Date.now();
-          if (now - lastMoveTime < MOVE_DELAY) return;
-
-          let nx = px, ny = py, moved = false;
-
-          if (keys['ArrowUp']    || keys['w'] || keys['W']) { ny--; facing='up';    moved=true; }
-          else if (keys['ArrowDown']  || keys['s'] || keys['S']) { ny++; facing='down';  moved=true; }
-          else if (keys['ArrowLeft']  || keys['a'] || keys['A']) { nx--; facing='left';  moved=true; }
-          else if (keys['ArrowRight'] || keys['d'] || keys['D']) { nx++; facing='right'; moved=true; }
-
-          if (moved && isWalkable(nx, ny)) {
-            // Check if stepping onto trainer
-            if (nx === TRAINER_X && ny === TRAINER_Y) {
-              if (trainerUnlocked) {
-                inEncounter = true;
-                document.getElementById('trainer-form').submit();
-              }
-              // If not unlocked, block movement onto trainer tile
-              return;
-            }
-            px = nx; py = ny;
-            stepFrame = 1 - stepFrame;
-            lastMoveTime = now;
-            moving = true;
-
-            // Check for grass encounter
-            if (isGrass(px, py) && Math.random() < 0.3) {
-              triggerEncounter();
-            }
-          } else if (moved) {
-            moving = false;
-          }
-        }
-
-        function triggerEncounter() {
-          inEncounter = true;
-          // Flash effect
-          const flash = document.getElementById('battle-flash');
-          let flashes = 0;
-          const flashInterval = setInterval(() => {
-            flash.style.opacity = flashes % 2 === 0 ? '0.85' : '0';
-            flashes++;
-            if (flashes >= 6) {
-              clearInterval(flashInterval);
-              flash.style.opacity = '0';
-              showEncounterPopup();
-            }
-          }, 120);
-        }
-
-        function showEncounterPopup() {
-          const creature = WILD_CREATURES[Math.floor(Math.random() * WILD_CREATURES.length)];
-          const emoji = TYPE_EMOJI[creature.type] || '❓';
-          document.getElementById('mob-emoji').textContent = emoji;
-          document.getElementById('encounter-name').textContent = `Wild ${creature.name}!`;
-          document.getElementById('encounter-type').textContent = creature.type + ' Type';
-          document.getElementById('encounter-text').textContent =
-            `A wild ${creature.name} leapt out from the tall grass!`;
-          document.getElementById('encounter-stats').innerHTML =
-            `<span>❤️ ${creature.hp}</span><span>⚔️ ${creature.attack}</span><span>🛡️ ${creature.defense}</span><span>💨 ${creature.speed}</span>`;
-          document.getElementById('encounter-popup').classList.add('show');
-        }
-
-        function gameLoop() {
-          tryMove();
-          draw();
-          requestAnimationFrame(gameLoop);
-        }
-
-        // Prevent arrow key scrolling
-        window.addEventListener('keydown', e => {
-          if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
-        });
-
-        gameLoop();
-      })();
-      </script>
-
-    <?php
-    }
-    // --- WILD BATTLE SCREEN ---
-    elseif ($_SESSION['zone'] == 'battle') {
-
-        $typeEmoji = [
-            'Bug'=>'🐛','Flying'=>'🦅','Fire'=>'🔥','Water'=>'💧',
-            'Grass'=>'🌿','Electric'=>'⚡','Normal'=>'🐾','Rock'=>'🪨',
-            'Ghost'=>'👻','Psychic'=>'🔮','Ice'=>'❄️','Dragon'=>'🐲',
-        ];
-        $wildEmoji = $typeEmoji[$_SESSION['wild_type']] ?? '❓';
-
-        $myHpPct   = isset($_SESSION['my_max_hp']) ? max(0, round($_SESSION['my_hp'] / $_SESSION['my_max_hp'] * 100)) : 100;
-        $wildHpPct = max(0, round($_SESSION['wild_hp'] / $_SESSION['wild_max_hp'] * 100));
-
-        // HP bar colour: green > yellow > red
-        $myBarColor   = $myHpPct > 50 ? '#22c55e' : ($myHpPct > 25 ? '#f59e0b' : '#ef4444');
-        $wildBarColor = $wildHpPct > 50 ? '#22c55e' : ($wildHpPct > 25 ? '#f59e0b' : '#ef4444');
-
-        $battleOver  = $_SESSION['wild_hp'] <= 0 || ($_SESSION['my_hp'] ?? 1) <= 0 || !empty($_SESSION['wild_caught']);
-        $caught      = !empty($_SESSION['wild_caught']);
-        $myFainted   = ($_SESSION['my_hp'] ?? 1) <= 0;
-        $wildFainted = $_SESSION['wild_hp'] <= 0;
-
-        // Active creature from team slot 0
-        $activeCreature = !empty($_SESSION['team']) ? $_SESSION['team'][0] : null;
-        $myCreatureName = $activeCreature['name'] ?? 'Your Creature';
-        $starterEmoji   = ['Grass'=>'🌱','Water'=>'💧','Fire'=>'🔥','Electric'=>'⚡','Bug'=>'🐛','Flying'=>'🦅'][$activeCreature['type'] ?? 'Grass'] ?? '🌱';
-    ?>
-      <style>
-        .wild-arena {
-          display: grid;
-          grid-template-columns: 1fr auto 1fr;
-          align-items: center;
-          gap: 10px;
-          margin: 18px 0;
-        }
-        .wild-card {
-          border-radius: 14px;
-          padding: 14px 16px;
-          border: 2px solid;
-        }
-        .wild-card.mine  { border-color: rgba(6,182,212,0.4); background: rgba(6,182,212,0.06); }
-        .wild-card.enemy { border-color: rgba(34,197,94,0.4); background: rgba(34,197,94,0.06); }
-        .wild-card h3 {
-          font-family: 'Press Start 2P', monospace;
-          font-size: 8px;
-          margin-bottom: 10px;
-          line-height: 1.6;
-        }
-        .wild-card.mine  h3 { color: var(--player-color); }
-        .wild-card.enemy h3 { color: var(--green); }
-        .wild-sprite { font-size: 38px; display: block; text-align: center; margin-bottom: 6px; }
-        .hp-text  { font-size: 11px; font-weight: 700; color: var(--muted); margin-bottom: 5px; }
-        .hp-track { background: rgba(255,255,255,0.08); border-radius: 999px; height: 9px; overflow: hidden; }
-        .hp-fill  { height: 100%; border-radius: 999px; transition: width 0.4s ease; }
-        .type-badge {
-          display: inline-block;
-          font-size: 9px;
-          font-weight: 800;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-          padding: 2px 8px;
-          border-radius: 999px;
-          background: rgba(255,255,255,0.08);
-          color: var(--accent2);
-          margin-top: 6px;
-        }
-        .balls-row {
-          display: flex;
-          gap: 6px;
-          align-items: center;
-          font-size: 13px;
-          font-weight: 700;
-          color: var(--muted);
-          margin-bottom: 14px;
-        }
-        .ball-icon { font-size: 18px; }
-        .action-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
-          margin-top: 4px;
-        }
-        .btn-ball {
-          background: linear-gradient(135deg, rgba(251,191,36,0.2), rgba(217,119,6,0.2));
-          border: 2px solid #f59e0b;
-          color: #fbbf24;
-          padding: 12px 10px;
-          border-radius: 12px;
-          font-family: 'Press Start 2P', monospace;
-          font-size: 9px;
-          cursor: pointer;
-          transition: all 0.2s;
-          letter-spacing: 0.5px;
-        }
-        .btn-ball:hover { background: rgba(251,191,36,0.25); transform: translateY(-2px); }
-        .btn-ball:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-
-        /* Attack sub-menu overlay (reusing existing attack-menu styles) */
-        #wild-attack-overlay {
-          display: none;
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,0.7);
-          backdrop-filter: blur(4px);
-          z-index: 100;
-          align-items: flex-end;
-          justify-content: center;
-          padding: 20px;
-        }
-        #wild-attack-overlay.open { display: flex; }
-
-        /* Team panel */
-        .team-section {
-          margin-top: 20px;
-          border-top: 1px solid var(--border);
-          padding-top: 16px;
-        }
-        .team-label {
-          font-family: 'Press Start 2P', monospace;
-          font-size: 9px;
-          color: var(--gold);
-          margin-bottom: 12px;
-        }
-        .team-grid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 8px;
-        }
-        .team-slot {
-          background: rgba(255,255,255,0.03);
-          border: 1px solid var(--border);
-          border-radius: 10px;
-          padding: 10px 8px;
-          text-align: center;
-        }
-        .team-slot .t-emoji { font-size: 22px; }
-        .team-slot .t-name  { font-size: 9px; font-weight: 800; color: var(--text); margin-top: 4px; display: block; }
-        .team-slot .t-type  { font-size: 9px; color: var(--muted); }
-        .team-empty { opacity: 0.3; border-style: dashed; }
-      </style>
-
-      <h2>Wild Battle! <?php echo $wildEmoji; ?></h2>
-
-      <div class="battle-msg"><?php echo htmlspecialchars($_SESSION['wild_battle_msg']); ?></div>
-
-      <div class="wild-arena">
-        <!-- My creature -->
-        <div class="wild-card mine">
-          <span class="wild-sprite"><?php echo $starterEmoji; ?></span>
-          <h3><?php echo htmlspecialchars($myCreatureName); ?></h3>
-          <div class="hp-text"><?php echo $_SESSION['my_hp'] ?? '?'; ?> / <?php echo $_SESSION['my_max_hp'] ?? '?'; ?> HP</div>
-          <div class="hp-track"><div class="hp-fill" style="width:<?php echo $myHpPct; ?>%;background:<?php echo $myBarColor; ?>;"></div></div>
-        </div>
-
-        <div class="vs-badge">VS</div>
-
-        <!-- Wild creature -->
-        <div class="wild-card enemy">
-          <span class="wild-sprite"><?php echo $wildEmoji; ?></span>
-          <h3><?php echo htmlspecialchars($_SESSION['wild_name']); ?></h3>
-          <div class="hp-text"><?php echo $_SESSION['wild_hp']; ?> / <?php echo $_SESSION['wild_max_hp']; ?> HP</div>
-          <div class="hp-track"><div class="hp-fill" style="width:<?php echo $wildHpPct; ?>%;background:<?php echo $wildBarColor; ?>;"></div></div>
-          <span class="type-badge"><?php echo htmlspecialchars($_SESSION['wild_type']); ?></span>
-        </div>
-      </div>
-
-      <?php
-      // Get active creature's type-specific moves
-      $activeType  = $_SESSION['my_type'] ?? ($_SESSION['team'][0]['type'] ?? 'Grass');
-      $typeMoves   = getMovesForType($activeType);
-      $typeEmojiMap2 = ['Bug'=>'🐛','Flying'=>'🦅','Fire'=>'🔥','Water'=>'💧','Grass'=>'🌿','Electric'=>'⚡','Normal'=>'🐾','Rock'=>'🪨','Ghost'=>'👻','Psychic'=>'🔮'];
-      ?>
-
-      <?php if (!$battleOver): ?>
-        <!-- Balls row -->
-        <div class="balls-row">
-          <span class="ball-icon">🟡</span>
-          <span><?php echo $_SESSION['balls'] ?? 0; ?> balls remaining</span>
-          <span style="margin-left:auto;font-size:10px;color:var(--accent2);">Active: <strong><?php echo $_SESSION['team'][0]['name']; ?></strong> (<?php echo $activeType; ?>)</span>
-        </div>
-
-        <!-- 4 action buttons -->
-        <div class="action-grid">
-          <button class="attack-trigger-btn" onclick="document.getElementById('wild-attack-overlay').classList.add('open')" style="grid-column:1/2;">
-            ⚔️ Attack
-          </button>
-          <form action="game.php" method="POST" style="margin:0;">
-            <input type="hidden" name="throw_ball" value="true">
-            <button class="btn-ball" type="submit" style="width:100%;height:100%;" <?php if (($_SESSION['balls'] ?? 0) <= 0) echo 'disabled'; ?>>
-              🟡 Throw Ball
-            </button>
-          </form>
-          <?php if (count($_SESSION['team'] ?? []) > 1): ?>
-          <button class="btn btn-ghost" onclick="document.getElementById('switch-overlay').classList.add('open')" style="grid-column:1/2;">
-            🔄 Switch
-          </button>
-          <?php endif; ?>
-          <form action="game.php" method="POST" style="margin:0;<?php echo count($_SESSION['team'] ?? []) > 1 ? '' : 'grid-column:1/-1;'; ?>">
-            <input type="hidden" name="run_away" value="true">
-            <button class="btn btn-ghost" type="submit" style="width:100%;">🏃 Run Away</button>
-          </form>
-        </div>
-
-        <!-- TYPE-BASED move overlay -->
-        <div id="wild-attack-overlay">
-          <div class="attack-menu">
-            <h3><?php echo $typeEmojiMap2[$activeType] ?? '⚔️'; ?> <?php echo $activeType; ?> Moves</h3>
-            <div class="moves-grid">
-              <?php foreach ($typeMoves as $key => $m): ?>
-                <form action="game.php" method="POST">
-                  <input type="hidden" name="wild_attack" value="true">
-                  <input type="hidden" name="move" value="<?php echo htmlspecialchars($key); ?>">
-                  <button class="move-btn" type="submit">
-                    <span class="move-emoji"><?php echo $m['emoji']; ?></span>
-                    <span class="move-name"><?php echo htmlspecialchars($m['name']); ?></span>
-                    <span class="move-desc"><?php echo htmlspecialchars($m['desc']); ?></span>
-                    <div class="move-power">Power: <?php echo $m['power']; ?></div>
-                  </button>
-                </form>
-              <?php endforeach; ?>
-            </div>
-            <button class="cancel-btn" onclick="document.getElementById('wild-attack-overlay').classList.remove('open')">Cancel</button>
-          </div>
-        </div>
-
-        <!-- SWITCH CREATURE overlay -->
-        <?php if (count($_SESSION['team'] ?? []) > 1): ?>
-        <div id="switch-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);z-index:100;align-items:flex-end;justify-content:center;padding:20px;">
-          <div class="attack-menu" style="max-width:500px;">
-            <h3>🔄 Switch Creature</h3>
-            <p style="font-size:11px;color:#f59e0b;margin-bottom:14px;text-align:center;">⚠️ Enemy gets a free hit when you switch!</p>
-            <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
-              <?php foreach ($_SESSION['team'] as $si => $sm):
-                if ($si === 0) continue; // skip current active
-                $se = $typeEmojiMap2[$sm['type']] ?? '❓';
-                $shp = $sm['max_hp'] > 0 ? round($sm['hp']/$sm['max_hp']*100) : 0;
-                $shpColor = $shp > 50 ? '#22c55e' : ($shp > 25 ? '#f59e0b' : '#ef4444');
-                $fainted = $sm['hp'] <= 0;
-              ?>
-                <form action="game.php" method="POST" style="margin:0;">
-                  <input type="hidden" name="switch_creature" value="true">
-                  <input type="hidden" name="switch_idx" value="<?php echo $si; ?>">
-                  <button type="submit" style="width:100%;background:rgba(255,255,255,<?php echo $fainted ? '0.02' : '0.05'; ?>);border:1.5px solid <?php echo $fainted ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.15)'; ?>;border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:<?php echo $fainted ? 'not-allowed' : 'pointer'; ?>;opacity:<?php echo $fainted ? '0.4' : '1'; ?>;" <?php if ($fainted) echo 'disabled'; ?>>
-                    <span style="font-size:28px;"><?php echo $se; ?></span>
-                    <div style="flex:1;text-align:left;">
-                      <div style="font-family:'Press Start 2P',monospace;font-size:9px;color:var(--text);margin-bottom:5px;"><?php echo htmlspecialchars($sm['name']); ?> <span style="color:var(--muted);">Lv.<?php echo $sm['level'] ?? 1; ?></span></div>
-                      <div style="font-size:10px;color:var(--muted);margin-bottom:4px;"><?php echo htmlspecialchars($sm['type']); ?> — HP: <?php echo $sm['hp']; ?>/<?php echo $sm['max_hp']; ?></div>
-                      <div style="background:rgba(255,255,255,0.07);border-radius:999px;height:5px;overflow:hidden;">
-                        <div style="height:100%;border-radius:999px;width:<?php echo $shp; ?>%;background:<?php echo $shpColor; ?>;"></div>
-                      </div>
-                    </div>
-                    <?php if (!$fainted): ?><span style="color:var(--green);font-size:18px;">→</span><?php else: ?><span style="color:var(--red);font-size:12px;font-weight:700;">FAINTED</span><?php endif; ?>
-                  </button>
-                </form>
-              <?php endforeach; ?>
-            </div>
-            <button class="cancel-btn" onclick="document.getElementById('switch-overlay').classList.remove('open')">Cancel</button>
-          </div>
-        </div>
-        <style>#switch-overlay.open { display: flex !important; }</style>
-        <?php endif; ?>
-
-      <?php elseif ($caught): ?>
-        <div style="text-align:center;padding:16px 0;">
-          <div style="font-size:52px;margin-bottom:10px;">🎉</div>
-          <p style="color:var(--green);font-weight:800;font-size:16px;margin-bottom:6px;"><?php echo htmlspecialchars($_SESSION['wild_name']); ?> joined your team!</p>
-        </div>
-        <form action="game.php" method="POST">
-          <input type="hidden" name="leave_battle" value="true">
-          <button class="btn btn-success" type="submit" style="width:100%;">← Back to Map</button>
-        </form>
-
-      <?php elseif ($wildFainted): ?>
-        <div style="text-align:center;padding:10px 0 16px;">
-          <p style="color:var(--gold);font-weight:800;font-size:15px;">You won the battle!</p>
-        </div>
-        <form action="game.php" method="POST">
-          <input type="hidden" name="leave_battle" value="true">
-          <button class="btn btn-success" type="submit" style="width:100%;">← Back to Map</button>
-        </form>
-
-      <?php elseif ($myFainted): ?>
-        <form action="game.php" method="POST">
-          <input type="hidden" name="restart" value="true">
-          <button class="btn btn-danger" type="submit" style="width:100%;">💀 Game Over — Restart</button>
-        </form>
-      <?php endif; ?>
-
-
-      <!-- Team display (always visible during battle) -->
-      <?php if (!empty($_SESSION['team'])): ?>
-        <div class="team-section">
-          <div class="team-label">🎒 Your Team (<?php echo count($_SESSION['team']); ?>/6)</div>
-          <div class="team-grid">
-            <?php
-            $typeEmojiFull = ['Bug'=>'🐛','Flying'=>'🦅','Fire'=>'🔥','Water'=>'💧','Grass'=>'🌿','Electric'=>'⚡','Normal'=>'🐾','Rock'=>'🪨','Ghost'=>'👻','Psychic'=>'🔮'];
-            foreach ($_SESSION['team'] as $tm):
-              $te = $typeEmojiFull[$tm['type']] ?? '❓';
-            ?>
-              <div class="team-slot">
-                <div class="t-emoji"><?php echo $te; ?></div>
-                <span class="t-name"><?php echo htmlspecialchars($tm['name']); ?></span>
-                <div class="t-type"><?php echo htmlspecialchars($tm['type']); ?></div>
-              </div>
-            <?php endforeach; ?>
-          </div>
-        </div>
-      <?php endif; ?>
-
-    <?php } ?>
-
-    <?php
-    // --- TEAM SCREEN ---
-    if (($_SESSION['zone'] ?? '') === 'team'):
-        $typeEmojiMap = ['Bug'=>'🐛','Flying'=>'🦅','Fire'=>'🔥','Water'=>'💧','Grass'=>'🌿',
-                         'Electric'=>'⚡','Normal'=>'🐾','Rock'=>'🪨','Ghost'=>'👻','Psychic'=>'🔮'];
-    ?>
-    <style>
-      .team-screen-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 22px;
-      }
-      .team-screen-header h2 { margin-bottom: 0; }
-
-      .team-card-full {
-        background: rgba(255,255,255,0.03);
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        padding: 18px 20px;
-        margin-bottom: 14px;
-        position: relative;
-        overflow: hidden;
-        transition: border-color 0.2s;
-      }
-      .team-card-full:first-of-type {
-        border-color: rgba(251,191,36,0.4);
-        background: rgba(251,191,36,0.04);
-      }
-      .active-badge {
-        position: absolute;
-        top: 12px; right: 14px;
-        font-size: 9px;
-        font-family: 'Press Start 2P', monospace;
-        color: #fbbf24;
-        background: rgba(251,191,36,0.15);
-        border: 1px solid rgba(251,191,36,0.3);
-        border-radius: 999px;
-        padding: 3px 9px;
-      }
-
-      .tc-top {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        margin-bottom: 14px;
-      }
-      .tc-sprite { font-size: 42px; line-height: 1; }
-      .tc-info   { flex: 1; }
-      .tc-name {
-        font-family: 'Press Start 2P', monospace;
-        font-size: 10px;
-        color: var(--text);
-        margin-bottom: 4px;
-      }
-      .tc-meta {
-        font-size: 12px;
-        color: var(--muted);
-        font-weight: 700;
-      }
-      .tc-level {
-        font-family: 'Press Start 2P', monospace;
-        font-size: 11px;
-        color: var(--gold);
-      }
-
-      /* XP bar */
-      .xp-row { margin-bottom: 12px; }
-      .xp-label {
-        display: flex;
-        justify-content: space-between;
-        font-size: 11px;
-        font-weight: 800;
-        color: var(--muted);
-        margin-bottom: 4px;
-      }
-      .xp-label span:first-child { color: var(--accent2); }
-      .xp-track {
-        background: rgba(255,255,255,0.07);
-        border-radius: 999px;
-        height: 8px;
-        overflow: hidden;
-      }
-      .xp-fill {
-        height: 100%;
-        border-radius: 999px;
-        background: linear-gradient(90deg, #06b6d4, #7c3aed);
-        transition: width 0.5s ease;
-      }
-
-      /* Stats grid */
-      .tc-stats {
-        display: grid;
-        grid-template-columns: repeat(4,1fr);
-        gap: 8px;
-      }
-      .stat-box {
-        background: rgba(255,255,255,0.04);
-        border-radius: 10px;
-        padding: 8px 6px;
-        text-align: center;
-      }
-      .stat-val {
-        font-family: 'Press Start 2P', monospace;
-        font-size: 11px;
-        color: var(--text);
-        display: block;
-        margin-bottom: 3px;
-      }
-      .stat-lbl {
-        font-size: 9px;
-        color: var(--muted);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-
-      /* HP bar in team card */
-      .tc-hp-row { margin-bottom: 10px; }
-      .tc-hp-label {
-        display: flex;
-        justify-content: space-between;
-        font-size: 11px;
-        font-weight: 700;
-        color: var(--muted);
-        margin-bottom: 4px;
-      }
-      .tc-hp-track { background:rgba(255,255,255,0.07); border-radius:999px; height:8px; overflow:hidden; }
-      .tc-hp-fill  { height:100%; border-radius:999px; transition: width 0.4s; }
-
-      .empty-team {
-        text-align: center;
-        padding: 40px 0;
-        color: var(--muted);
-        font-size: 14px;
-      }
-      .empty-team .big { font-size: 48px; margin-bottom: 12px; }
-    </style>
-
-    <div class="team-screen-header">
-      <h2>🎒 Your Team</h2>
-      <form action="game.php" method="POST" style="margin:0;">
-        <input type="hidden" name="close_team" value="true">
-        <button class="btn btn-ghost" type="submit" style="padding:8px 18px;font-size:12px;">← Back</button>
-      </form>
     </div>
 
-    <?php if (empty($_SESSION['team'])): ?>
-      <div class="empty-team">
-        <div class="big">🎒</div>
-        <p>Your team is empty. Go catch some creatures!</p>
+    <div class="starter-card fire" onclick="selectStarter('embrite')">
+      <span class="starter-sprite">🦎</span>
+      <div class="starter-name">EMBRITE</div>
+      <div class="starter-type">🔥 FIRE TYPE</div>
+      <div class="starter-desc">A blazing lizard with<br>a fierce fighting heart.</div>
+      <div class="starter-stats">
+        ❤️ HP: Medium<br>
+        ⚔️ ATK: Very High<br>
+        🛡️ DEF: Low<br>
+        ✨ Moves: Ember, Flare,<br>&nbsp;&nbsp;Scratch, Growl
       </div>
-    <?php else: ?>
+    </div>
 
-      <?php foreach ($_SESSION['team'] as $i => $tm):
-          $te      = $typeEmojiMap[$tm['type']] ?? '❓';
-          $lvl     = $tm['level']   ?? 1;
-          $xp      = $tm['xp']      ?? 0;
-          $xpNext  = $tm['xp_next'] ?? xpForLevel($lvl);
-          $xpPct   = $xpNext > 0 ? min(100, round($xp / $xpNext * 100)) : 100;
-          $hpPct   = $tm['max_hp'] > 0 ? min(100, round($tm['hp'] / $tm['max_hp'] * 100)) : 100;
-          $hpColor = $hpPct > 50 ? '#22c55e' : ($hpPct > 25 ? '#f59e0b' : '#ef4444');
-      ?>
-        <div class="team-card-full">
-          <?php if ($i === 0): ?>
-            <span class="active-badge">★ ACTIVE</span>
-          <?php endif; ?>
-
-          <div class="tc-top">
-            <span class="tc-sprite"><?php echo $te; ?></span>
-            <div class="tc-info">
-              <div class="tc-name"><?php echo htmlspecialchars($tm['name']); ?></div>
-              <div class="tc-meta"><?php echo htmlspecialchars($tm['type']); ?> type</div>
-            </div>
-            <div class="tc-level">Lv.<?php echo $lvl; ?></div>
-          </div>
-
-          <!-- HP bar -->
-          <div class="tc-hp-row">
-            <div class="tc-hp-label">
-              <span>❤️ HP</span>
-              <span><?php echo $tm['hp']; ?> / <?php echo $tm['max_hp']; ?></span>
-            </div>
-            <div class="tc-hp-track">
-              <div class="tc-hp-fill" style="width:<?php echo $hpPct; ?>%;background:<?php echo $hpColor; ?>;"></div>
-            </div>
-          </div>
-
-          <!-- XP bar -->
-          <div class="xp-row">
-            <div class="xp-label">
-              <span>✨ XP</span>
-              <span><?php echo $xp; ?> / <?php echo $xpNext; ?> to Lv.<?php echo $lvl+1; ?></span>
-            </div>
-            <div class="xp-track">
-              <div class="xp-fill" style="width:<?php echo $xpPct; ?>%;"></div>
-            </div>
-          </div>
-
-          <!-- Stats -->
-          <div class="tc-stats">
-            <div class="stat-box">
-              <span class="stat-val"><?php echo $tm['attack']; ?></span>
-              <span class="stat-lbl">⚔️ Atk</span>
-            </div>
-            <div class="stat-box">
-              <span class="stat-val"><?php echo $tm['defense']; ?></span>
-              <span class="stat-lbl">🛡️ Def</span>
-            </div>
-            <div class="stat-box">
-              <span class="stat-val"><?php echo $tm['speed']; ?></span>
-              <span class="stat-lbl">💨 Spd</span>
-            </div>
-            <div class="stat-box">
-              <span class="stat-val"><?php echo $tm['max_hp']; ?></span>
-              <span class="stat-lbl">❤️ MaxHP</span>
-            </div>
-          </div>
-        </div>
-      <?php endforeach; ?>
-
-      <!-- Empty slots -->
-      <?php for ($s = count($_SESSION['team']); $s < 6; $s++): ?>
-        <div class="team-card-full team-empty" style="opacity:0.3;border-style:dashed;text-align:center;padding:16px;color:var(--muted);font-size:13px;">
-          Empty Slot <?php echo $s+1; ?>
-        </div>
-      <?php endfor; ?>
-
-    <?php endif; ?>
-
-    <?php endif; // end team screen ?>
-
-    <?php
-    // --- TRAINER BATTLE SCREEN ---
-    if (($_SESSION['zone'] ?? '') === 'trainer_battle'):
-        $typeEmojiTr = ['Bug'=>'🐛','Flying'=>'🦅','Fire'=>'🔥','Water'=>'💧','Grass'=>'🌿',
-                        'Electric'=>'⚡','Normal'=>'🐾','Rock'=>'🪨','Ghost'=>'👻','Psychic'=>'🔮'];
-        $myHpPct     = isset($_SESSION['my_max_hp']) && $_SESSION['my_max_hp'] > 0
-                        ? max(0, round($_SESSION['my_hp'] / $_SESSION['my_max_hp'] * 100)) : 100;
-        $trHpPct     = max(0, round($_SESSION['trainer_hp'] / $_SESSION['trainer_max_hp'] * 100));
-        $myBarColor  = $myHpPct > 50 ? '#22c55e' : ($myHpPct > 25 ? '#f59e0b' : '#ef4444');
-        $trBarColor  = $trHpPct > 50 ? '#22c55e' : ($trHpPct > 25 ? '#f59e0b' : '#ef4444');
-        $trDefeated  = $_SESSION['trainer_defeated'] ?? false;
-        $myFainted   = ($_SESSION['my_hp'] ?? 1) <= 0;
-
-        $trActiveCreature = !empty($_SESSION['team']) ? $_SESSION['team'][0] : null;
-        $starterEmoji = ['Grass'=>'🌱','Water'=>'💧','Fire'=>'🔥','Electric'=>'⚡','Bug'=>'🐛','Flying'=>'🦅'][$trActiveCreature['type'] ?? 'Grass'] ?? '🌱';
-        $myName = $trActiveCreature['name'] ?? 'Your Creature';
-    ?>
-      <h2>⚔️ Trainer Battle!</h2>
-
-      <?php
-        $trName     = $_SESSION['trainer_name']     ?? 'Trainer';
-        $trCreature = $_SESSION['trainer_creature'] ?? 'Emberfox';
-        $trEmoji    = $_SESSION['trainer_emoji']    ?? '🔥';
-        $mapZone    = $_SESSION['last_map_zone']    ?? 1;
-        $nextZone   = $mapZone + 1;
-        $dialogues  = [
-            'normal'  => "\"You won't pass through here so easily!\"",
-            'won'     => "\"...I can't believe I lost. Zone $nextZone is yours!\"",
-            'lost'    => "\"Ha! Your creature couldn't handle my $trCreature!\"",
-        ];
-      ?>
-
-      <!-- Trainer speech bubble -->
-      <div class="dialogue-box" style="margin-bottom:16px;border-left:3px solid #7c3aed;">
-        <strong style="color:#a78bfa;"><?php echo htmlspecialchars($trName); ?>:</strong>
-        <?php
-          if ($trDefeated)  echo $dialogues['won'];
-          elseif ($myFainted) echo $dialogues['lost'];
-          else echo $dialogues['normal'];
-        ?>
+    <div class="starter-card water" onclick="selectStarter('torrtle')">
+      <span class="starter-sprite">🐢</span>
+      <div class="starter-name">TORRTLE</div>
+      <div class="starter-type">💧 WATER TYPE</div>
+      <div class="starter-desc">A sturdy turtle with<br>a calm, defensive nature.</div>
+      <div class="starter-stats">
+        ❤️ HP: Medium<br>
+        ⚔️ ATK: Medium<br>
+        🛡️ DEF: Very High<br>
+        ✨ Moves: Water Gun, Bubble,<br>&nbsp;&nbsp;Tackle, Harden
       </div>
-
-      <div class="battle-msg" style="border-left-color:#a78bfa;"><?php echo htmlspecialchars($_SESSION['trainer_battle_msg']); ?></div>
-
-      <div class="wild-arena">
-        <div class="wild-card mine">
-          <span class="wild-sprite"><?php echo $starterEmoji; ?></span>
-          <h3><?php echo htmlspecialchars($myName); ?></h3>
-          <div class="hp-text"><?php echo $_SESSION['my_hp']; ?> / <?php echo $_SESSION['my_max_hp']; ?> HP</div>
-          <div class="hp-track"><div class="hp-fill" style="width:<?php echo $myHpPct; ?>%;background:<?php echo $myBarColor; ?>;"></div></div>
-        </div>
-
-        <div class="vs-badge">VS</div>
-
-        <div class="wild-card enemy" style="border-color:rgba(167,139,250,0.4);background:rgba(124,58,237,0.06);">
-          <span class="wild-sprite"><?php echo $trEmoji; ?></span>
-          <h3 style="color:#a78bfa;"><?php echo htmlspecialchars($trCreature); ?></h3>
-          <div class="hp-text"><?php echo $_SESSION['trainer_hp']; ?> / <?php echo $_SESSION['trainer_max_hp']; ?> HP</div>
-          <div class="hp-track"><div class="hp-fill" style="width:<?php echo $trHpPct; ?>%;background:<?php echo $trBarColor; ?>;"></div></div>
-          <span class="type-badge" style="color:#a78bfa;"><?php echo htmlspecialchars($trName); ?>'s creature</span>
-        </div>
-      </div>
-
-      <?php if ($trDefeated): ?>
-        <div style="text-align:center;padding:14px 0;">
-          <div style="font-size:44px;margin-bottom:8px;">🏆</div>
-          <p style="color:var(--gold);font-weight:800;font-size:15px;">You defeated <?php echo htmlspecialchars($trName); ?>!</p>
-          <p style="font-size:13px;margin-top:6px;">Zone <?php echo $nextZone; ?> is now unlocked! +5 bonus balls!</p>
-        </div>
-        <form action="game.php" method="POST">
-          <input type="hidden" name="advance_zone" value="true">
-          <button class="btn btn-success" type="submit" style="width:100%;margin-top:10px;">🗺️ Enter Zone <?php echo $nextZone; ?> →</button>
-        </form>
-
-      <?php elseif ($myFainted): ?>
-        <form action="game.php" method="POST">
-          <input type="hidden" name="restart" value="true">
-          <button class="btn btn-danger" type="submit" style="width:100%;">💀 Game Over — Restart</button>
-        </form>
-
-      <?php else:
-        $trActiveType = $_SESSION['my_type'] ?? ($_SESSION['team'][0]['type'] ?? 'Grass');
-        $trTypeMoves  = getMovesForType($trActiveType);
-        $teMapTr = ['Bug'=>'🐛','Flying'=>'🦅','Fire'=>'🔥','Water'=>'💧','Grass'=>'🌿','Electric'=>'⚡','Normal'=>'🐾','Rock'=>'🪨'];
-      ?>
-        <!-- Action row: Attack + Switch -->
-        <div style="display:flex;gap:10px;margin-bottom:10px;">
-          <button class="attack-trigger-btn" style="flex:1;" onclick="document.getElementById('trainer-attack-overlay').classList.add('open')">
-            ⚔️ Attack
-          </button>
-          <?php if (count($_SESSION['team'] ?? []) > 1): ?>
-          <button class="btn btn-ghost" style="flex:1;" onclick="document.getElementById('trainerSwitchOverlay').classList.add('open')">
-            🔄 Switch
-          </button>
-          <?php endif; ?>
-        </div>
-
-        <!-- TYPE-BASED trainer attack overlay -->
-        <div id="trainer-attack-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);z-index:100;align-items:flex-end;justify-content:center;padding:20px;">
-          <div class="attack-menu">
-            <h3><?php echo $teMapTr[$trActiveType] ?? '⚔️'; ?> <?php echo $trActiveType; ?> Moves</h3>
-            <div class="moves-grid">
-              <?php foreach ($trTypeMoves as $key => $m): ?>
-                <form action="game.php" method="POST">
-                  <input type="hidden" name="attack_trainer" value="true">
-                  <input type="hidden" name="move" value="<?php echo htmlspecialchars($key); ?>">
-                  <button class="move-btn" type="submit">
-                    <span class="move-emoji"><?php echo $m['emoji']; ?></span>
-                    <span class="move-name"><?php echo htmlspecialchars($m['name']); ?></span>
-                    <span class="move-desc"><?php echo htmlspecialchars($m['desc']); ?></span>
-                    <div class="move-power">Power: <?php echo $m['power']; ?></div>
-                  </button>
-                </form>
-              <?php endforeach; ?>
-            </div>
-            <button class="cancel-btn" onclick="document.getElementById('trainer-attack-overlay').classList.remove('open')">Cancel</button>
-          </div>
-        </div>
-        <style>#trainer-attack-overlay.open { display: flex !important; }</style>
-
-        <!-- SWITCH overlay for trainer battle -->
-        <?php if (count($_SESSION['team'] ?? []) > 1): ?>
-        <div id="trainerSwitchOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);z-index:100;align-items:flex-end;justify-content:center;padding:20px;">
-          <div class="attack-menu" style="max-width:500px;">
-            <h3>🔄 Switch Creature</h3>
-            <p style="font-size:11px;color:#f59e0b;margin-bottom:14px;text-align:center;">⚠️ Emberfox gets a free hit when you switch!</p>
-            <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:14px;">
-              <?php foreach ($_SESSION['team'] as $si => $sm):
-                if ($si === 0) continue;
-                $se = $teMapTr[$sm['type']] ?? '❓';
-                $shp = $sm['max_hp'] > 0 ? round($sm['hp']/$sm['max_hp']*100) : 0;
-                $sc = $shp > 50 ? '#22c55e' : ($shp > 25 ? '#f59e0b' : '#ef4444');
-                $fainted = $sm['hp'] <= 0;
-              ?>
-                <form action="game.php" method="POST" style="margin:0;">
-                  <input type="hidden" name="switch_creature" value="true">
-                  <input type="hidden" name="switch_idx" value="<?php echo $si; ?>">
-                  <button type="submit" style="width:100%;background:rgba(255,255,255,<?php echo $fainted?'0.02':'0.05';?>);border:1.5px solid rgba(255,255,255,<?php echo $fainted?'0.06':'0.15';?>);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;cursor:<?php echo $fainted?'not-allowed':'pointer';?>;opacity:<?php echo $fainted?'0.4':'1';?>;" <?php if($fainted) echo 'disabled'; ?>>
-                    <span style="font-size:28px;"><?php echo $se; ?></span>
-                    <div style="flex:1;text-align:left;">
-                      <div style="font-family:'Press Start 2P',monospace;font-size:9px;color:var(--text);margin-bottom:5px;"><?php echo htmlspecialchars($sm['name']); ?> <span style="color:var(--muted);">Lv.<?php echo $sm['level']??1;?></span></div>
-                      <div style="font-size:10px;color:var(--muted);margin-bottom:4px;"><?php echo $sm['type'];?> — <?php echo $sm['hp'];?>/<?php echo $sm['max_hp'];?> HP</div>
-                      <div style="background:rgba(255,255,255,0.07);border-radius:999px;height:5px;overflow:hidden;"><div style="height:100%;border-radius:999px;width:<?php echo $shp;?>%;background:<?php echo $sc;?>;"></div></div>
-                    </div>
-                    <?php echo $fainted ? '<span style="color:var(--red);font-size:12px;font-weight:700;">FAINTED</span>' : '<span style="color:var(--green);font-size:18px;">→</span>'; ?>
-                  </button>
-                </form>
-              <?php endforeach; ?>
-            </div>
-            <button class="cancel-btn" onclick="document.getElementById('trainerSwitchOverlay').classList.remove('open')">Cancel</button>
-          </div>
-        </div>
-        <style>#trainerSwitchOverlay.open { display: flex !important; }</style>
-        <?php endif; ?>
-
-      <?php endif; ?>
-
-
-    <?php endif; // end trainer battle ?>
-
-    <?php
-    // --- ZONE 2: ROCKY PEAKS ---
-    if (($_SESSION['zone'] ?? '') == 2):
-      $_SESSION['last_map_zone'] = 2;
-      $z2TrainerUnlocked = (bool)($_SESSION['trainer_unlocked'] ?? false);
-      $z2WildCreatures = array_values(array_filter($creaturesData['creatures'], function($c) { return $c['category'] === 'wild_zone2'; }));
-    ?>
-      <style>
-        #zone2-wrap { display:flex; flex-direction:column; align-items:center; gap:12px; }
-        #zone2Canvas {
-          border: 3px solid rgba(148,163,184,0.25);
-          border-radius: 12px;
-          image-rendering: pixelated;
-          box-shadow: 0 0 40px rgba(100,180,255,0.15);
-          display: block;
-        }
-        #zone2-hud {
-          width: 480px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          font-size: 12px;
-          color: var(--muted);
-        }
-        #zone2-hud span strong { color: #93c5fd; }
-        #z2-controls-hint { font-size:11px; color:var(--muted); text-align:center; opacity:0.7; }
-      </style>
-
-      <div id="zone2-wrap">
-        <div id="zone2-hud">
-          <span>🏔️ <strong>Zone 2: Rocky Peaks</strong></span>
-          <span>Use <strong>Arrow Keys</strong> or <strong>WASD</strong> to move</span>
-        </div>
-        <canvas id="zone2Canvas" width="480" height="480"></canvas>
-        <div id="z2-controls-hint">
-          Walk into cracked rock 🪨 to encounter wild creatures!
-          <?php if ($z2TrainerUnlocked): ?>
-            <span style="color:#f59e0b;font-weight:800;">⚔️ Find Trainer Mira!</span>
-          <?php endif; ?>
-        </div>
-      </div>
-
-      <div id="battle-flash"></div>
-
-      <form id="z2-trainer-form" action="game.php" method="POST" style="display:none;">
-        <input type="hidden" name="trainer_encounter" value="true">
-      </form>
-
-      <div id="encounter-popup">
-        <div id="encounter-box" style="border-color:#93c5fd;box-shadow:0 0 40px rgba(100,180,255,0.3);">
-          <span class="mob-sprite" id="mob-emoji">❓</span>
-          <h3 id="encounter-name" style="color:#93c5fd;">Wild Creature!</h3>
-          <p id="encounter-type" style="font-size:11px;color:#93c5fd;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;"></p>
-          <p id="encounter-text">A wild creature appeared!</p>
-          <div id="encounter-stats" style="display:flex;gap:14px;justify-content:center;margin-bottom:20px;font-size:12px;font-weight:700;color:var(--muted);"></div>
-          <form action="game.php" method="POST">
-            <input type="hidden" name="wild_encounter" value="true">
-            <button class="btn btn-danger" type="submit">⚔️ Battle!</button>
-          </form>
-        </div>
-      </div>
-
-      <script>
-      (function() {
-        const TILE = 32, COLS = 15, ROWS = 15;
-        const canvas = document.getElementById('zone2Canvas');
-        const ctx = canvas.getContext('2d');
-
-        // Tile types: 0=stone path, 1=snow, 2=cracked rock (encounter), 3=boulder(wall),
-        //             4=ice lake, 5=lava crack, 6=crystal, 7=trainer
-        const T = { PATH:0, SNOW:1, CRACK:2, BOULDER:3, ICE:4, LAVA:5, CRYSTAL:6, TRAINER:7 };
-
-        const TRAINER_X = 7, TRAINER_Y = 1;
-        const trainerUnlocked = <?php echo json_encode($z2TrainerUnlocked); ?>;
-
-        // Rocky Peaks map — cracked rocks everywhere, ice lake in centre, lava vents, crystals
-        const MAP = [
-          [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
-          [3,0,0,0,0,0,0,7,0,0,0,0,0,0,3],
-          [3,0,2,2,1,1,1,1,1,1,1,2,2,0,3],
-          [3,0,2,3,2,6,1,1,1,6,2,3,2,0,3],
-          [3,0,2,2,1,1,1,1,1,1,1,2,2,0,3],
-          [3,0,1,1,1,0,0,5,0,0,1,1,1,0,3],
-          [3,0,1,6,1,0,4,4,4,0,1,6,1,0,3],
-          [3,0,1,1,1,0,4,4,4,0,1,1,1,0,3],
-          [3,0,1,6,1,0,4,4,4,0,1,6,1,0,3],
-          [3,0,1,1,1,0,0,5,0,0,1,1,1,0,3],
-          [3,0,2,2,1,1,1,1,1,1,1,2,2,0,3],
-          [3,0,2,3,2,6,1,1,1,6,2,3,2,0,3],
-          [3,0,2,2,1,1,1,1,1,1,1,2,2,0,3],
-          [3,0,0,0,0,0,0,0,0,0,0,0,0,0,3],
-          [3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],
-        ];
-
-        let px = 7, py = 7, facing = 'down', stepFrame = 0, moving = false;
-        let lastMoveTime = 0;
-        const MOVE_DELAY = 150;
-        const keys = {};
-        let inEncounter = false;
-
-        const TYPE_EMOJI = {
-          'Bug':'🐛','Flying':'🦅','Fire':'🔥','Water':'💧','Grass':'🌿',
-          'Electric':'⚡','Normal':'🐾','Rock':'🪨','Ghost':'👻','Psychic':'🔮',
-          'Ice':'🧊','Dragon':'🐉','Dark':'🌑','Steel':'⚙️'
-        };
-
-        const WILD_CREATURES = <?php echo json_encode($z2WildCreatures); ?>;
-
-        function isWalkable(x, y) {
-          if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return false;
-          const t = MAP[y][x];
-          return t !== T.BOULDER && t !== T.ICE;
-        }
-        function isCrack(x, y) { return MAP[y][x] === T.CRACK; }
-
-        // ── TILE DRAWING ──────────────────────────────────────────────────────
-        function drawTile(tx, ty) {
-          const t = MAP[ty][tx];
-          const x = tx * TILE, y = ty * TILE;
-
-          // Base fill
-          const baseColors = {
-            [T.PATH]:    '#5a5a6e',
-            [T.SNOW]:    '#c8d8e8',
-            [T.CRACK]:   '#6b5a4e',
-            [T.BOULDER]: '#3a3a4a',
-            [T.ICE]:     '#a0d4f0',
-            [T.LAVA]:    '#3a2a1a',
-            [T.CRYSTAL]: '#c8d8e8',
-            [T.TRAINER]: '#5a5a6e',
-          };
-          ctx.fillStyle = baseColors[t] ?? '#555';
-          ctx.fillRect(x, y, TILE, TILE);
-
-          if (t === T.PATH) {
-            // Stone path — subtle grid lines
-            ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(x+2, y+2, TILE-4, TILE-4);
-          }
-
-          if (t === T.SNOW) {
-            // Snow sparkles
-            ctx.fillStyle = 'rgba(255,255,255,0.5)';
-            [[x+6,y+6],[x+18,y+14],[x+26,y+8],[x+10,y+22]].forEach(([sx,sy]) => {
-              ctx.fillRect(sx, sy, 2, 2);
-            });
-          }
-
-          if (t === T.CRACK) {
-            // Dark cracked rock with yellow crack lines
-            ctx.strokeStyle = '#b8860b';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(x+8,  y+6);  ctx.lineTo(x+16, y+14);
-            ctx.moveTo(x+16, y+14); ctx.lineTo(x+12, y+24);
-            ctx.moveTo(x+16, y+14); ctx.lineTo(x+24, y+20);
-            ctx.stroke();
-          }
-
-          if (t === T.BOULDER) {
-            ctx.fillStyle = '#2a2a36';
-            ctx.fillRect(x+2, y+8, TILE-4, TILE-10);
-            ctx.fillStyle = '#4a4a5e';
-            ctx.beginPath();
-            ctx.arc(x+16, y+10, 9, 0, Math.PI);
-            ctx.fill();
-          }
-
-          if (t === T.ICE) {
-            // Icy shimmer
-            const tw = Date.now() / 1200;
-            ctx.fillStyle = `rgba(180,230,255,${0.3 + Math.sin(tw + tx + ty)*0.2})`;
-            ctx.fillRect(x+2, y+2, TILE-4, TILE-4);
-            ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(x+4, y+10); ctx.lineTo(x+12, y+6);
-            ctx.stroke();
-          }
-
-          if (t === T.LAVA) {
-            // Lava glow pulsing
-            const tl = Date.now() / 500;
-            const glow = 0.4 + Math.sin(tl + tx*0.7)*0.3;
-            ctx.fillStyle = `rgba(255,80,0,${glow})`;
-            ctx.fillRect(x+6, y+6, TILE-12, TILE-12);
-            ctx.fillStyle = `rgba(255,180,0,${glow*0.6})`;
-            ctx.fillRect(x+10, y+10, TILE-20, TILE-20);
-          }
-
-          if (t === T.CRYSTAL) {
-            // Teal crystal shards
-            ctx.fillStyle = '#4dd9d9';
-            ctx.beginPath();
-            ctx.moveTo(x+16, y+4); ctx.lineTo(x+22, y+14);
-            ctx.lineTo(x+16, y+28); ctx.lineTo(x+10, y+14);
-            ctx.closePath();
-            ctx.fill();
-            ctx.fillStyle = 'rgba(255,255,255,0.4)';
-            ctx.beginPath();
-            ctx.moveTo(x+16, y+4); ctx.lineTo(x+19, y+14); ctx.lineTo(x+16, y+10);
-            ctx.closePath();
-            ctx.fill();
-          }
-        }
-
-        // ── TRAINER NPC ───────────────────────────────────────────────────────
-        function drawTrainer() {
-          const tx = TRAINER_X * TILE, ty = TRAINER_Y * TILE;
-          const pulse = Math.sin(Date.now() / 400) * 0.5 + 0.5;
-
-          if (trainerUnlocked) {
-            ctx.save();
-            ctx.shadowColor = '#93c5fd';
-            ctx.shadowBlur = 14 + pulse * 10;
-            ctx.fillStyle = 'rgba(147,197,253,0.2)';
-            ctx.beginPath();
-            ctx.arc(tx+16, ty+16, 18, 0, Math.PI*2);
-            ctx.fill();
-            ctx.restore();
-          }
-
-          // Body — ice-blue coat
-          ctx.fillStyle = trainerUnlocked ? '#1d6fa4' : '#4b5563';
-          ctx.fillRect(tx+9, ty+16, 14, 12);
-          // Head
-          ctx.fillStyle = '#fcd5b0';
-          ctx.beginPath();
-          ctx.arc(tx+16, ty+12, 8, 0, Math.PI*2);
-          ctx.fill();
-          // White hair (Mira)
-          ctx.fillStyle = '#e0e8f0';
-          ctx.fillRect(tx+9, ty+5, 14, 7);
-          // Eyes
-          ctx.fillStyle = '#1e293b';
-          ctx.fillRect(tx+13, ty+11, 2, 2);
-          ctx.fillRect(tx+17, ty+11, 2, 2);
-          // Legs
-          ctx.fillStyle = '#1e3a5f';
-          ctx.fillRect(tx+10, ty+28, 5, 5);
-          ctx.fillRect(tx+17, ty+28, 5, 5);
-
-          ctx.font = 'bold 9px sans-serif';
-          ctx.textAlign = 'center';
-          if (trainerUnlocked) {
-            ctx.fillStyle = '#93c5fd';
-            ctx.fillText('⚔ MIRA', tx+16, ty-4);
-          } else {
-            ctx.fillStyle = 'rgba(255,255,255,0.35)';
-            ctx.fillText('MIRA', tx+16, ty-4);
-          }
-          ctx.textAlign = 'left';
-        }
-
-        // ── PLAYER SPRITE (same system, slightly darker palette) ─────────────
-        function drawPlayer() {
-          const x = px * TILE, y = py * TILE;
-          const bob = moving ? (stepFrame === 1 ? -1 : 0) : 0;
-
-          ctx.fillStyle = 'rgba(0,0,0,0.25)';
-          ctx.beginPath();
-          ctx.ellipse(x+16, y+33, 8, 3, 0, 0, Math.PI*2);
-          ctx.fill();
-
-          ctx.fillStyle = '#0f172a';
-          ctx.fillRect(x+9, y+16+bob, 14, 12);
-          ctx.fillStyle = '#fcd5b0';
-          ctx.beginPath();
-          ctx.arc(x+16, y+12+bob, 8, 0, Math.PI*2);
-          ctx.fill();
-
-          ctx.fillStyle = '#92400e';
-          if (facing === 'down')       { ctx.fillRect(x+9, y+6+bob, 14, 6); ctx.fillRect(x+13, y+11+bob, 2, 2); ctx.fillRect(x+17, y+11+bob, 2, 2); }
-          else if (facing === 'up')    { ctx.fillRect(x+9, y+6+bob, 14, 6); }
-          else if (facing === 'left')  { ctx.fillRect(x+11, y+11+bob, 2, 2); }
-          else if (facing === 'right') { ctx.fillRect(x+19, y+11+bob, 2, 2); }
-
-          ctx.fillStyle = '#1d4ed8';
-          ctx.fillRect(x+8, y+7+bob, 16, 4);
-          ctx.fillRect(x+10, y+4+bob, 12, 4);
-
-          ctx.fillStyle = '#1e3a5f';
-          const legOff = moving && stepFrame === 1 ? 2 : 0;
-          ctx.fillRect(x+10, y+28+bob, 5, 6+legOff);
-          ctx.fillRect(x+17, y+28+bob, 5, 6-legOff);
-        }
-
-        function draw() {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          for (let ry = 0; ry < ROWS; ry++)
-            for (let rx = 0; rx < COLS; rx++)
-              drawTile(rx, ry);
-          drawTrainer();
-          drawPlayer();
-        }
-
-        document.addEventListener('keydown', e => { keys[e.key] = true; });
-        document.addEventListener('keyup',   e => { keys[e.key] = false; });
-
-        function tryMove() {
-          if (inEncounter) return;
-          const now = Date.now();
-          if (now - lastMoveTime < MOVE_DELAY) return;
-
-          let nx = px, ny = py, moved = false;
-          if      (keys['ArrowUp']    || keys['w'] || keys['W']) { ny--; facing='up';    moved=true; }
-          else if (keys['ArrowDown']  || keys['s'] || keys['S']) { ny++; facing='down';  moved=true; }
-          else if (keys['ArrowLeft']  || keys['a'] || keys['A']) { nx--; facing='left';  moved=true; }
-          else if (keys['ArrowRight'] || keys['d'] || keys['D']) { nx++; facing='right'; moved=true; }
-
-          if (moved && isWalkable(nx, ny)) {
-            if (nx === TRAINER_X && ny === TRAINER_Y) {
-              if (trainerUnlocked) { inEncounter = true; document.getElementById('z2-trainer-form').submit(); }
-              return;
-            }
-            px = nx; py = ny;
-            stepFrame = 1 - stepFrame;
-            lastMoveTime = now;
-            moving = true;
-            if (isCrack(px, py) && Math.random() < 0.3) triggerEncounter();
-          } else if (moved) { moving = false; }
-        }
-
-        function triggerEncounter() {
-          inEncounter = true;
-          const flash = document.getElementById('battle-flash');
-          let flashes = 0;
-          const iv = setInterval(() => {
-            flash.style.opacity = flashes % 2 === 0 ? '0.85' : '0';
-            if (++flashes >= 6) { clearInterval(iv); flash.style.opacity = '0'; showEncounterPopup(); }
-          }, 120);
-        }
-
-        function showEncounterPopup() {
-          if (!WILD_CREATURES.length) { document.getElementById('encounter-form') && document.getElementById('encounter-form').submit(); return; }
-          const c = WILD_CREATURES[Math.floor(Math.random() * WILD_CREATURES.length)];
-          const emoji = TYPE_EMOJI[c.type] || '❓';
-          document.getElementById('mob-emoji').textContent = emoji;
-          document.getElementById('encounter-name').textContent = `Wild ${c.name}!`;
-          document.getElementById('encounter-type').textContent = c.type + ' Type';
-          document.getElementById('encounter-text').textContent = `A wild ${c.name} emerged from the rocks!`;
-          document.getElementById('encounter-stats').innerHTML =
-            `<span>❤️ ${c.hp}</span><span>⚔️ ${c.attack}</span><span>🛡️ ${c.defense}</span><span>💨 ${c.speed}</span>`;
-          document.getElementById('encounter-popup').classList.add('show');
-        }
-
-        function gameLoop() { tryMove(); draw(); requestAnimationFrame(gameLoop); }
-        window.addEventListener('keydown', e => {
-          if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
-        });
-        gameLoop();
-      })();
-      </script>
-
-    <?php endif; // end zone 2 ?>
+    </div>
 
   </div>
+  <div id="starterConfirm"></div>
+  <button class="starter-choose-btn" id="starterChooseBtn" onclick="confirmStarter()">CHOOSE THIS PARTNER!</button>
+</div>
 
+<h1 style="display:none">⚡ PokéQuest</h1>
+<div id="gameWrapper">
+  <canvas id="gameCanvas" width="480" height="432"></canvas>
+
+  <!-- Scaled overlay: all in-game overlays live here and scale with canvas -->
+  <div id="gameScale">
+    <div id="areaBanner" class="hidden"></div>
+
+    <!-- Dialogue -->
+    <div id="dialogueBox">
+      <div id="dialogueSpeaker">???</div>
+      <div id="dialogueText">...</div>
+      <div id="dialoguePrompt">▼ SPACE / ENTER</div>
+    </div>
+
+    <!-- Battle -->
+    <div id="battleScreen">
+      <canvas id="battleBg" width="480" height="432" style="position:absolute;inset:0;z-index:0;"></canvas>
+      <div id="battleContent">
+        <div class="battle-title" id="battleTitle">⚔️ WILD BATTLE!</div>
+        <div id="trainerStrip">
+          <span id="trainerStripName">TRAINER</span>
+          <div id="trainerMonList"></div>
+        </div>
+        <div class="battle-area">
+          <div class="pokemon-card">
+            <div class="pokemon-sprite" id="enemySprite">🐛</div>
+            <div class="pokemon-name" id="enemyName">CATERPIL</div>
+            <div class="pokemon-lvl" id="enemyLvl">Lv.1</div>
+            <div class="hp-bar-wrap"><div class="hp-bar" id="enemyHpBar" style="width:100%;background:#4ade80;"></div></div>
+            <div class="hp-text" id="enemyHpText">HP: 20/20</div>
+          </div>
+          <div class="pokemon-card">
+            <div class="pokemon-sprite" id="playerSprite">🐉</div>
+            <div class="pokemon-name" id="playerPokeName">DRAKELING</div>
+            <div class="pokemon-lvl" id="playerLvl">Lv.1</div>
+            <div class="hp-bar-wrap"><div class="hp-bar" id="playerHpBar" style="width:100%;background:#4ade80;"></div></div>
+            <div class="hp-text" id="playerHpText">HP: 30/30</div>
+            <div class="exp-bar-wrap"><div class="exp-bar" id="playerExpBar" style="width:0%;"></div></div>
+            <div class="exp-label" id="playerExpText">EXP 0 / 100</div>
+          </div>
+        </div>
+        <div class="battle-log" id="battleLog">A wild Pokémon appeared!</div>
+        <div id="battleTabs">
+          <button class="tab-btn active" onclick="showTab('fight')">⚔️ Fight</button>
+          <button class="tab-btn" id="tab-catch-btn" onclick="showTab('catch')">🎒 Bag</button>
+          <button class="tab-btn" onclick="showTab('switch')">🔄 Switch</button>
+          <button class="tab-btn" id="tab-run-btn" onclick="showTab('run')">🏃 Run</button>
+        </div>
+        <div class="battle-panel active" id="panel-fight">
+          <button class="battle-btn" id="btn-m0" onclick="playerAttack(0)">—</button>
+          <button class="battle-btn" id="btn-m1" onclick="playerAttack(1)">—</button>
+          <button class="battle-btn" id="btn-m2" onclick="playerAttack(2)">—</button>
+          <button class="battle-btn" id="btn-m3" onclick="playerAttack(3)">—</button>
+        </div>
+        <div class="battle-panel" id="panel-catch">
+          <button class="battle-btn catch-btn" id="btn-pokeball" onclick="throwBall('pokeball')">🔵 Poké Ball (<span id="ballCount">5</span>)</button>
+          <button class="battle-btn catch-btn" id="btn-greatball" onclick="throwBall('greatball')">🟣 Great Ball (<span id="greatCount">0</span>)</button>
+        </div>
+        <div class="battle-panel" id="panel-switch"></div>
+        <div class="battle-panel" id="panel-run">
+          <button class="battle-btn flee-btn" onclick="fleeBattle()">🏃 Run Away</button>
+        </div>
+      </div>
+      <div id="catchAnim">
+        <div id="catchBall">🔵</div>
+        <p id="catchMsg">Throwing...</p>
+      </div>
+    </div>
+
+    <!-- Transition -->
+    <div id="transitionOverlay">
+      <div id="transitionText">ROUTE 2</div>
+      <div id="transitionSub">ENTERING NEW AREA...</div>
+    </div>
+  </div><!-- /gameScale -->
+</div><!-- /gameWrapper -->
+
+<!-- HUD fixed at bottom -->
+<div id="hud">
+  <div>🐾 <span id="hudLead">—</span></div>
+  <div>❤️ <span id="hpDisplay">—</span></div>
+  <div>⭐ Lv<span id="lvlDisplay">—</span></div>
+  <div>👟 <span id="stepsDisplay">0</span></div>
+  <div><span id="areaTag">🌿 PALLET PLAINS</span></div>
+  <div style="font-size:10px;color:#555;">WASD/Arrows · Space=talk</div>
+</div>
+
+<!-- Party panel fixed right -->
+<div id="partyPanel">
+  <h2>🎒 PARTY</h2>
+  <div id="partySlots"></div>
+  <div id="partyInfo"></div>
+</div>
+<div id="notif"></div>
+
+<script>
+// ════════════════════════════════════════════════
+//  CONSTANTS
+// ════════════════════════════════════════════════
+const T={GRASS:0,TALL:1,WATER:2,PATH:3,TREE:4,SAND:5,WARP:6,SIGN:7,ROCK:8,CAVE:9,FLOWER:10,SNOW:11};
+const TILE=32,CANVAS_W=480,CANVAS_H=432,COLS=15,ROWS=13;
+
+// ════════════════════════════════════════════════
+//  TRAINER DEFINITIONS
+// ════════════════════════════════════════════════
+const TRAINER_DEFS={
+  lass:{
+    id:'lass',
+    name:'LASS LILY',
+    sprite:'',
+    color:'#f9a8d4',
+    area:'pallet',
+    tx:9, ty:4,           // tile position on the map
+    facing:'left',        // direction they look
+    sightDir:'left',      // direction they can see the player
+    sightRange:4,
+    greeting:'Well hello there, traveller!',
+    challenge:'I challenge you to a Pokémon battle!',
+    defeat:'Oh no! You\'re so strong! Take these balls as a prize.',
+    win:'Better luck next time, challenger!',
+    reward:{pokeball:2, greatball:0},
+    team:[ makePending('caterpil',6), makePending('sparrow',7) ],
+  },
+  rockguy:{
+    id:'rockguy',
+    name:'HIKER ROK',
+    sprite:'🧗',
+    color:'#a78bfa',
+    area:'cave',
+    tx:10, ty:4,
+    facing:'left',
+    sightDir:'left',
+    sightRange:5,
+    greeting:'These caves are MY territory, stranger.',
+    challenge:'Prepare yourself! My Pokémon are forged in stone!',
+    defeat:'Incredible... You\'ve conquered the cave! Here, take this.',
+    win:'The caves always win! Hahaha!',
+    reward:{pokeball:1, greatball:1},
+    team:[ makePending('pebbler',9), makePending('venomite',8), makePending('zappchu',10) ],
+  },
+};
+
+// placeholder so makePending can be called before makeMon is defined
+function makePending(id,lvl){return{__pending:true,id,lvl};}
+// resolve pending after makeMon defined
+function resolvePending(t){if(t.__pending){return makeMon(t.id,t.lvl);}return t;}
+
+// Trainer runtime state (defeated flag, current team index in battle)
+const trainerState={};
+Object.keys(TRAINER_DEFS).forEach(k=>{trainerState[k]={defeated:false};});
+
+// ════════════════════════════════════════════════
+//  AREAS
+// ════════════════════════════════════════════════
+const AREAS={
+  pallet:{
+    name:'PALLET PLAINS', tag:'🌿',
+    skyTop:'#87ceeb', skyBot:'#c8f0a8',
+    grassColor:'#4ade80', tallColor:'#166534', pathColor:'#d4a373',
+    wildPool:['caterpil','sparrow','aquafin','buzzwing'],
+    trainers:['lass'],
+    map:[
+      [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+      [4,10,0,0,0,1,1,0,0,0,1,1,0,10,4],
+      [4,0,0,3,3,3,3,3,0,0,0,0,0,0,4],
+      [4,0,0,3,7,0,0,3,0,1,1,1,0,0,4],
+      [4,1,0,3,0,0,0,3,0,1,1,1,0,0,4],
+      [4,1,0,3,0,2,2,3,0,0,0,0,0,0,4],
+      [4,0,0,3,0,2,2,3,3,3,3,3,0,0,4],
+      [4,0,0,3,0,0,0,0,0,0,3,0,0,0,4],
+      [4,0,1,3,0,0,3,3,3,0,3,0,1,1,4],
+      [4,0,1,3,0,0,3,5,3,0,3,0,1,1,4],
+      [4,0,0,3,0,0,3,5,3,0,3,0,0,0,4],
+      [4,0,0,3,3,3,3,3,3,3,3,6,0,0,4],
+      [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+    ],
+    playerStart:{x:7,y:6},
+    warpTarget:{area:'cave',x:2,y:6},
+  },
+  cave:{
+    name:'CRYSTAL CAVE', tag:'🏔️',
+    skyTop:'#1a0a2e', skyBot:'#2d1a4e',
+    grassColor:'#5b21b6', tallColor:'#312e81', pathColor:'#7c6a4a',
+    wildPool:['zappchu','frostail','venomite','flameling'],
+    trainers:['rockguy'],
+    map:[
+      [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+      [4,9,9,9,9,9,0,0,0,9,9,9,9,9,4],
+      [4,9,0,0,0,9,0,1,1,9,0,0,0,9,4],
+      [4,9,0,1,0,9,0,1,1,9,0,1,0,9,4],
+      [4,9,0,1,0,0,0,0,0,0,0,1,0,9,4],
+      [4,9,0,0,0,3,3,3,3,3,0,0,0,9,4],
+      [4,6,0,0,0,3,8,8,8,3,0,0,0,9,4],
+      [4,9,0,0,0,3,8,8,8,3,0,0,0,9,4],
+      [4,9,0,1,0,3,3,3,3,3,0,1,0,9,4],
+      [4,9,0,1,0,0,0,0,0,0,0,1,0,9,4],
+      [4,9,0,0,0,9,1,1,1,9,0,0,0,9,4],
+      [4,9,9,9,9,9,0,0,0,9,9,9,9,9,4],
+      [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+    ],
+    playerStart:{x:2,y:6},
+    warpTarget:{area:'pallet',x:11,y:10},
+  },
+};
+
+let currentArea='pallet';
+function getArea(){return AREAS[currentArea];}
+function getMap(){return getArea().map;}
+function getTrainersForArea(){
+  return getArea().trainers.map(id=>TRAINER_DEFS[id]);
+}
+
+// ════════════════════════════════════════════════
+//  TILE COLOR
+// ════════════════════════════════════════════════
+function tileColor(type){
+  const a=getArea();
+  switch(type){
+    case T.GRASS:  return a.grassColor||'#4ade80';
+    case T.TALL:   return a.tallColor||'#166534';
+    case T.WATER:  return '#38bdf8';
+    case T.PATH:   return a.pathColor||'#d4a373';
+    case T.TREE:   return currentArea==='cave'?'#1e1b4b':'#15803d';
+    case T.SAND:   return '#fde68a';
+    case T.WARP:   return '#facc15';
+    case T.SIGN:   return '#92400e';
+    case T.ROCK:   return '#78716c';
+    case T.CAVE:   return '#1c1917';
+    case T.FLOWER: return '#4ade80';
+    case T.SNOW:   return '#e0f2fe';
+    default:       return '#222';
+  }
+}
+
+// ════════════════════════════════════════════════
+//  POKÉMON DATA
+// ════════════════════════════════════════════════
+const PDEFS={
+  // ── STARTERS ──
+  leafling: {name:'LEAFLING', sprite:'🌿',baseHp:34,atk:7, def:6, moves:['Vine Whip','Razor Leaf','Tackle','Growl']},
+  embrite:  {name:'EMBRITE',  sprite:'🦎',baseHp:28,atk:11,def:2, moves:['Ember','Flare','Scratch','Growl']},
+  torrtle:  {name:'TORRTLE',  sprite:'🐢',baseHp:30,atk:6, def:9, moves:['Water Gun','Bubble','Tackle','Harden']},
+  // ── WILD ──
+  drakeling:{name:'DRAKELING',sprite:'🐉',baseHp:30,atk:8,def:3,moves:['Ember','Dragon Claw','Tackle','Growl']},
+  caterpil: {name:'CATERPIL', sprite:'🐛',baseHp:20,atk:4,def:1,moves:['Tackle','String Shot','Harden','Scratch']},
+  sparrow:  {name:'SPARROW',  sprite:'🐦',baseHp:18,atk:6,def:2,moves:['Peck','Gust','Quick Attack','Growl']},
+  pebbler:  {name:'PEBBLER',  sprite:'🪨',baseHp:28,atk:5,def:6,moves:['Rock Throw','Harden','Tackle','Rollout']},
+  flameling:{name:'FLAMELING',sprite:'🔥',baseHp:22,atk:9,def:1,moves:['Flare','Ember','Quick Attack','Scratch']},
+  aquafin:  {name:'AQUAFIN',  sprite:'🐟',baseHp:24,atk:6,def:3,moves:['Water Gun','Tackle','Bite','Growl']},
+  buzzwing: {name:'BUZZWING', sprite:'🦋',baseHp:19,atk:7,def:2,moves:['Wing Attack','Gust','Powder','Tackle']},
+  zappchu:  {name:'ZAPPCHU',  sprite:'⚡',baseHp:21,atk:8,def:2,moves:['Thunderbolt','Quick Attack','Thunder Wave','Scratch']},
+  frostail: {name:'FROSTAIL', sprite:'🦊',baseHp:23,atk:7,def:3,moves:['Ice Shard','Bite','Tail Whip','Scratch']},
+  venomite: {name:'VENOMITE', sprite:'🐍',baseHp:26,atk:6,def:4,moves:['Poison Fang','Wrap','Bite','Harden']},
+};
+const MDEFS={
+  'Vine Whip':    {power:10,acc:.95,emoji:'🌿'},
+  'Razor Leaf':   {power:12,acc:.9, emoji:'🍃'},
+  'Bubble':       {power:8, acc:1.0,emoji:'🫧'},
+  'Ember':        {power:10,acc:.9, emoji:'🔥'},
+  'Dragon Claw':  {power:12,acc:.85,emoji:'🐉'},
+  'Tackle':       {power:7, acc:1.0,emoji:'💥'},
+  'Growl':        {power:0, acc:1.0,emoji:'😤',effect:'debuff'},
+  'Scratch':      {power:6, acc:1.0,emoji:'🖐️'},
+  'String Shot':  {power:0, acc:1.0,emoji:'🕸️',effect:'debuff'},
+  'Harden':       {power:0, acc:1.0,emoji:'🛡️',effect:'buff'},
+  'Peck':         {power:8, acc:.95,emoji:'🐦'},
+  'Gust':         {power:7, acc:1.0,emoji:'💨'},
+  'Quick Attack': {power:6, acc:1.0,emoji:'💨'},
+  'Rock Throw':   {power:10,acc:.9, emoji:'🪨'},
+  'Rollout':      {power:9, acc:.9, emoji:'🌀'},
+  'Flare':        {power:14,acc:.8, emoji:'🔥'},
+  'Water Gun':    {power:10,acc:.95,emoji:'💧'},
+  'Bite':         {power:9, acc:.95,emoji:'🦷'},
+  'Wing Attack':  {power:9, acc:.95,emoji:'🦋'},
+  'Powder':       {power:5, acc:1.0,emoji:'✨'},
+  'Thunderbolt':  {power:12,acc:.85,emoji:'⚡'},
+  'Thunder Wave': {power:0, acc:.9, emoji:'⚡',effect:'debuff'},
+  'Ice Shard':    {power:10,acc:.95,emoji:'❄️'},
+  'Tail Whip':    {power:0, acc:1.0,emoji:'🦊',effect:'debuff'},
+  'Poison Fang':  {power:11,acc:.9, emoji:'🐍'},
+  'Wrap':         {power:6, acc:1.0,emoji:'🌀'},
+};
+
+function makeMon(defId,level=1){
+  const d=PDEFS[defId];
+  const maxHp=d.baseHp+level*4;
+  const moves=d.moves.map(name=>({name,...(MDEFS[name]||{power:5,acc:1.0,emoji:'⚡'})}));
+  return{id:defId,name:d.name,sprite:d.sprite,level,maxHp,hp:maxHp,
+         atk:d.atk+level,def:d.def+Math.floor(level/2),moves,exp:0,expToNext:level*20};
+}
+
+// ════════════════════════════════════════════════
+//  GAME STATE
+// ════════════════════════════════════════════════
+const MAX_PARTY=6;
+let party=[];   // filled after starter selection
+let leadIndex=0;
+const inventory={pokeball:5,greatball:0};
+const player={x:7,y:6,px:7*TILE,py:6*TILE,moving:false,dir:'down',steps:0,wins:0};
+function getLead(){return party[leadIndex]||null;}
+
+// Battle state — extended for trainer battles
+const battle={
+  active:false, enemy:null, busy:false,
+  isTrainer:false,
+  trainer:null,          // TRAINER_DEFS entry
+  trainerTeam:[],        // resolved mon array
+  trainerMonIdx:0,       // which of the trainer's mons is currently out
+};
+
+// ════════════════════════════════════════════════
+//  DIALOGUE STATE
+// ════════════════════════════════════════════════
+let dialogue={
+  active:false,
+  lines:[],
+  lineIdx:0,
+  onDone:null,
+};
+
+function startDialogue(speaker, lines, onDone){
+  dialogue={active:true,lines,lineIdx:0,onDone:onDone||null};
+  document.getElementById('dialogueSpeaker').textContent=speaker;
+  document.getElementById('dialogueText').textContent=lines[0];
+  document.getElementById('dialogueBox').classList.add('active');
+}
+function advanceDialogue(){
+  if(!dialogue.active)return;
+  dialogue.lineIdx++;
+  if(dialogue.lineIdx>=dialogue.lines.length){
+    // done
+    document.getElementById('dialogueBox').classList.remove('active');
+    dialogue.active=false;
+    if(dialogue.onDone)dialogue.onDone();
+  } else {
+    document.getElementById('dialogueText').textContent=dialogue.lines[dialogue.lineIdx];
+  }
+}
+
+// ════════════════════════════════════════════════
+//  INPUT
+// ════════════════════════════════════════════════
+const MOVE_KEYS={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
+                 w:'up',s:'down',a:'left',d:'right'};
+const keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.key]=true;
+  // dialogue advance
+  if((e.key===' '||e.key==='Enter')&&dialogue.active){
+    e.preventDefault();
+    advanceDialogue();
+  }
+});
+document.addEventListener('keyup',e=>{delete keys[e.key];});
+
+// ════════════════════════════════════════════════
+//  MAP HELPERS
+// ════════════════════════════════════════════════
+function getTile(tx,ty){
+  const m=getMap();
+  if(ty<0||ty>=ROWS||tx<0||tx>=COLS)return T.TREE;
+  return m[ty][tx];
+}
+function isWalkable(tx,ty){
+  const t=getTile(tx,ty);
+  if(t===T.TREE||t===T.WATER||t===T.ROCK||t===T.CAVE||t===T.SIGN)return false;
+  // block trainer's tile
+  for(const tr of getTrainersForArea()){
+    if(!trainerState[tr.id].defeated&&tr.tx===tx&&tr.ty===ty)return false;
+  }
+  return true;
+}
+function isWarp(tx,ty){return getTile(tx,ty)===T.WARP;}
+
+// ════════════════════════════════════════════════
+//  TRAINER LINE-OF-SIGHT
+// ════════════════════════════════════════════════
+function checkTrainerSight(){
+  for(const tr of getTrainersForArea()){
+    if(trainerState[tr.id].defeated)continue;
+    const dx=player.x-tr.tx, dy=player.y-tr.ty;
+    let inSight=false;
+    if(tr.sightDir==='left'  &&dy===0&&dx<0&&dx>=-tr.sightRange)inSight=true;
+    if(tr.sightDir==='right' &&dy===0&&dx>0&&dx<= tr.sightRange)inSight=true;
+    if(tr.sightDir==='up'    &&dx===0&&dy<0&&dy>=-tr.sightRange)inSight=true;
+    if(tr.sightDir==='down'  &&dx===0&&dy>0&&dy<= tr.sightRange)inSight=true;
+    if(inSight){
+      triggerTrainer(tr);
+      return;
+    }
+  }
+}
+
+let exclamShowing=null;
+let exclamTimer=null;
+
+function triggerTrainer(tr){
+  if(battle.active||dialogue.active||transitioning)return;
+  // show ! above trainer
+  showExclaim(tr);
+  setTimeout(()=>{
+    hideExclaim();
+    startDialogue(tr.name,[tr.greeting,tr.challenge],()=>{
+      beginTrainerBattle(tr);
+    });
+  },900);
+}
+
+function showExclaim(tr){
+  hideExclaim();
+  const wrap=document.createElement('div');
+  wrap.className='exclaim-wrap';
+  wrap.id='exclaim-wrap';
+  const ex=document.createElement('div');
+  ex.className='exclaim';
+  ex.textContent='!';
+  wrap.appendChild(ex);
+  // position above trainer on canvas
+  const sx=(tr.tx*TILE-camX)+(TILE/2)-12;
+  const sy=(tr.ty*TILE-camY)-22;
+  wrap.style.left=sx+'px';
+  wrap.style.top=sy+'px';
+  document.getElementById('gameWrapper').appendChild(wrap);
+  exclamShowing=wrap;
+}
+function hideExclaim(){
+  if(exclamShowing){exclamShowing.remove();exclamShowing=null;}
+}
+
+// ════════════════════════════════════════════════
+//  TRAINER BATTLE
+// ════════════════════════════════════════════════
+function beginTrainerBattle(tr){
+  // Resolve pending mons
+  const team=tr.team.map(resolvePending);
+  tr.team=team; // replace with resolved copies (fresh HP each time for same battle)
+  // actually make fresh copies so HP is full
+  const freshTeam=team.map(m=>makeMon(m.id,m.level));
+
+  battle.isTrainer=true;
+  battle.trainer=tr;
+  battle.trainerTeam=freshTeam;
+  battle.trainerMonIdx=0;
+  battle.enemy=freshTeam[0];
+  battle.active=true;
+  battle.busy=false;
+
+  // update title
+  document.getElementById('battleTitle').textContent='⚔️ TRAINER BATTLE!';
+  // trainer strip
+  const strip=document.getElementById('trainerStrip');
+  strip.classList.add('active');
+  document.getElementById('trainerStripName').textContent=tr.sprite+' '+tr.name;
+  updateTrainerMonList();
+
+  // disable bag (can't catch in trainer battles) & run tab
+  document.getElementById('tab-catch-btn').disabled=true;
+  document.getElementById('tab-catch-btn').style.opacity='0.35';
+  document.getElementById('tab-run-btn').disabled=true;
+  document.getElementById('tab-run-btn').style.opacity='0.35';
+
+  updateBattleUI();
+  setBattleLog(tr.name+' sent out '+battle.enemy.name+'!');
+  drawBattleBg(getArea());
+  document.getElementById('battleScreen').classList.add('active');
+  showTab('fight');
+}
+
+function updateTrainerMonList(){
+  const dots=battle.trainerTeam.map((m,i)=>{
+    const alive=m.hp>0;
+    const isCurrent=i===battle.trainerMonIdx;
+    return `<span style="color:${isCurrent?'#FFD700':alive?'#4ade80':'#555'}">${m.sprite}</span>`;
+  }).join(' ');
+  document.getElementById('trainerMonList').innerHTML=dots;
+}
+
+// Trainer sends next mon
+function trainerSendNextMon(){
+  const tr=battle.trainer;
+  battle.trainerMonIdx++;
+  if(battle.trainerMonIdx>=battle.trainerTeam.length){
+    // trainer defeated
+    endTrainerBattle(true);
+    return;
+  }
+  battle.enemy=battle.trainerTeam[battle.trainerMonIdx];
+  updateTrainerMonList();
+  updateBattleUI();
+  setBattleLog(tr.name+' sent out '+battle.enemy.name+'!');
+  setBusy(false);
+}
+
+function endTrainerBattle(won){
+  const tr=battle.trainer;
+  battle.active=false;
+  battle.isTrainer=false;
+  document.getElementById('battleScreen').classList.remove('active');
+  document.getElementById('trainerStrip').classList.remove('active');
+  document.getElementById('tab-catch-btn').disabled=false;
+  document.getElementById('tab-catch-btn').style.opacity='1';
+  document.getElementById('tab-run-btn').disabled=false;
+  document.getElementById('tab-run-btn').style.opacity='1';
+  document.getElementById('battleTitle').textContent='⚔️ WILD BATTLE!';
+
+  if(won){
+    trainerState[tr.id].defeated=true;
+    // give reward
+    inventory.pokeball+=tr.reward.pokeball||0;
+    inventory.greatball+=tr.reward.greatball||0;
+    player.wins++;
+    renderPartyPanel();updateHUD();
+    setTimeout(()=>{
+      startDialogue(tr.name,[tr.defeat,'You received: '+(tr.reward.pokeball?'🔵×'+tr.reward.pokeball+' ':'')+(tr.reward.greatball?'🟣×'+tr.reward.greatball:'')+'!'],null);
+      showNotif(tr.name+' defeated! 🏆');
+    },400);
+  } else {
+    party.forEach(p=>{if(p.hp<=0)p.hp=Math.floor(p.maxHp*.35)+1;});
+    renderPartyPanel();updateHUD();
+    setTimeout(()=>startDialogue(tr.name,[tr.win],null),400);
+  }
+}
+
+// ════════════════════════════════════════════════
+//  WILD BATTLE START
+// ════════════════════════════════════════════════
+function startBattle(){
+  const a=getArea(),lead=getLead();
+  const lvl=Math.max(1,lead.level+Math.floor(Math.random()*4)-2);
+  const pool=a.wildPool;
+  const defId=pool[Math.floor(Math.random()*pool.length)];
+  battle.isTrainer=false;
+  battle.enemy=makeMon(defId,lvl);
+  battle.active=true;battle.busy=false;
+  document.getElementById('battleTitle').textContent='⚔️ WILD BATTLE!';
+  document.getElementById('trainerStrip').classList.remove('active');
+  document.getElementById('tab-catch-btn').disabled=false;
+  document.getElementById('tab-catch-btn').style.opacity='1';
+  document.getElementById('tab-run-btn').disabled=false;
+  document.getElementById('tab-run-btn').style.opacity='1';
+  updateBattleUI();
+  setBattleLog('A wild '+battle.enemy.name+' (Lv.'+lvl+') appeared!');
+  drawBattleBg(a);
+  document.getElementById('battleScreen').classList.add('active');
+  showTab('fight');
+}
+
+function drawBattleBg(a){
+  const bc=document.getElementById('battleBg');
+  const bx=bc.getContext('2d');  const g=bx.createLinearGradient(0,0,0,432);
+  g.addColorStop(0,a.skyTop||'#0a1628');
+  g.addColorStop(1,a.skyBot||'#1a2a4a');
+  bx.fillStyle=g;bx.fillRect(0,0,480,432);
+  if(currentArea==='pallet'){
+    bx.fillStyle='rgba(74,222,128,.12)';
+    for(let i=0;i<8;i++){bx.beginPath();bx.arc(40+i*55,360+Math.sin(i)*20,30+i*4,0,Math.PI*2);bx.fill();}
+  } else {
+    bx.fillStyle='rgba(99,102,241,.15)';
+    for(let i=0;i<6;i++){bx.beginPath();bx.arc(50+i*70,380,25,0,Math.PI*2);bx.fill();}
+    bx.fillStyle='rgba(30,27,75,.8)';
+    for(let i=0;i<12;i++){bx.beginPath();bx.moveTo(i*42,0);bx.lineTo(i*42+20,0);bx.lineTo(i*42+10,40+Math.sin(i)*20,0);bx.fill();}
+  }
+}
+
+// ════════════════════════════════════════════════
+//  BATTLE UI
+// ════════════════════════════════════════════════
+function showTab(tab){
+  document.querySelectorAll('.tab-btn').forEach((b,i)=>{
+    b.classList.toggle('active',['fight','catch','switch','run'][i]===tab);
+  });
+  document.querySelectorAll('.battle-panel').forEach(p=>p.classList.remove('active'));
+  const panel=document.getElementById('panel-'+tab);
+  if(panel)panel.classList.add('active');
+  if(tab==='switch')renderSwitchPanel();
+}
+
+function updateBattleUI(){
+  const lead=getLead(),en=battle.enemy;
+  if(!en)return;
+  document.getElementById('playerSprite').textContent=lead.sprite;
+  document.getElementById('playerPokeName').textContent=lead.name;
+  document.getElementById('playerLvl').textContent='Lv.'+lead.level;
+  setHpBar('player',lead.hp,lead.maxHp);
+  document.getElementById('enemySprite').textContent=en.sprite;
+  document.getElementById('enemyName').textContent=en.name;
+  document.getElementById('enemyLvl').textContent='Lv.'+en.level;
+  setHpBar('enemy',en.hp,en.maxHp);
+  lead.moves.forEach((mv,i)=>{
+    const b=document.getElementById('btn-m'+i);
+    if(!b)return;
+    b.textContent=(mv.emoji||'⚡')+' '+mv.name;
+    b.disabled=false;
+  });
+  document.getElementById('ballCount').textContent=inventory.pokeball;
+  document.getElementById('greatCount').textContent=inventory.greatball;
+  document.getElementById('btn-pokeball').disabled=inventory.pokeball<=0||battle.isTrainer;
+  document.getElementById('btn-greatball').disabled=inventory.greatball<=0||battle.isTrainer;
+  setExpBar();
+}
+
+function setHpBar(who,hp,max){
+  const pct=Math.max(0,hp/max)*100;
+  const bar=document.getElementById(who+'HpBar');
+  bar.style.width=pct+'%';
+  bar.style.background=pct>50?'#4ade80':pct>25?'#facc15':'#ef4444';
+  document.getElementById(who+'HpText').textContent='HP: '+Math.max(0,hp)+'/'+max;
+}
+function setExpBar(){
+  const lead=getLead();
+  const pct=Math.min(100,(lead.exp/lead.expToNext)*100);
+  document.getElementById('playerExpBar').style.width=pct+'%';
+  document.getElementById('playerExpText').textContent='EXP '+lead.exp+' / '+lead.expToNext;
+}
+function setBattleLog(msg){document.getElementById('battleLog').textContent=msg;}
+function setBusy(v){
+  battle.busy=v;
+  ['btn-m0','btn-m1','btn-m2','btn-m3','btn-pokeball','btn-greatball'].forEach(id=>{
+    const b=document.getElementById(id);if(b)b.disabled=v||(id.includes('ball')&&battle.isTrainer);
+  });
+}
+
+// ════════════════════════════════════════════════
+//  BATTLE – FIGHT
+// ════════════════════════════════════════════════
+function playerAttack(idx){
+  if(battle.busy)return;
+  const lead=getLead(),mv=lead.moves[idx];
+  if(!mv)return;
+  setBusy(true);
+  if(Math.random()>mv.acc){
+    setBattleLog(lead.name+' used '+mv.name+'... but missed!');
+    setTimeout(enemyTurn,1100);return;
+  }
+  let dmg=0;
+  if(mv.power>0){
+    dmg=Math.max(1,Math.floor(mv.power+lead.atk-battle.enemy.def+Math.random()*3));
+    battle.enemy.hp=Math.max(0,battle.enemy.hp-dmg);
+  }
+  if(mv.effect==='buff') setBattleLog(lead.name+' raised its defense!');
+  else if(mv.effect==='debuff'){setBattleLog(lead.name+' used '+mv.name+'! Enemy weakened!');battle.enemy.def=Math.max(1,battle.enemy.def-1);}
+  else setBattleLog(lead.name+' used '+mv.name+'!'+(dmg?' Dealt '+dmg+' damage!':''));
+  updateBattleUI();
+  if(battle.enemy.hp<=0){
+    setTimeout(handleEnemyFaint,1100);return;
+  }
+  setTimeout(enemyTurn,1100);
+}
+
+function handleEnemyFaint(){
+  if(battle.isTrainer){
+    const tr=battle.trainer;
+    setBattleLog(battle.enemy.name+' fainted!');
+    // exp for the lead
+    const lead=getLead();
+    const exp=battle.enemy.level*18;lead.exp+=exp;
+    while(lead.exp>=lead.expToNext){
+      lead.exp-=lead.expToNext;lead.level++;lead.expToNext=lead.level*20;
+      lead.maxHp+=4;lead.hp=Math.min(lead.hp+6,lead.maxHp);lead.atk+=2;lead.def+=1;
+    }
+    updateBattleUI();setExpBar();renderPartyPanel();updateHUD();
+    // check if trainer has more
+    const remaining=battle.trainerTeam.slice(battle.trainerMonIdx+1).filter(m=>m.hp>0);
+    if(remaining.length===0){
+      setTimeout(()=>endTrainerBattle(true),1200);
+    } else {
+      setTimeout(()=>{
+        setBattleLog(tr.name+' is about to send another Pokémon!');
+        setTimeout(trainerSendNextMon,1200);
+      },900);
+    }
+  } else {
+    setTimeout(()=>endBattle(true),1100);
+  }
+}
+
+function enemyTurn(){
+  const en=battle.enemy,lead=getLead();
+  const mv=en.moves[Math.floor(Math.random()*en.moves.length)];
+  if(!mv){setBusy(false);return;}
+  if(Math.random()>mv.acc){
+    setBattleLog(en.name+' used '+mv.name+'... missed!');
+    setBusy(false);return;
+  }
+  let dmg=0;
+  if(mv.power>0){
+    dmg=Math.max(1,Math.floor(mv.power+en.atk-lead.def+Math.random()*3));
+    lead.hp=Math.max(0,lead.hp-dmg);
+  }
+  if(mv.effect==='debuff')setBattleLog(en.name+' used '+mv.name+'!');
+  else setBattleLog(en.name+' used '+mv.name+'!'+(dmg?' You took '+dmg+' damage!':''));
+  setHpBar('player',lead.hp,lead.maxHp);
+  updateHUD();
+  if(lead.hp<=0){
+    const alive=party.filter(p=>p.hp>0);
+    if(alive.length===0){
+      setTimeout(()=>(battle.isTrainer?endTrainerBattle(false):endBattle(false)),1100);
+    } else {
+      setBattleLog(lead.name+' fainted! Switch your Pokémon!');
+      showTab('switch');setBusy(false);
+    }
+    return;
+  }
+  setBusy(false);
+}
+
+// ════════════════════════════════════════════════
+//  BATTLE – CATCH (wild only)
+// ════════════════════════════════════════════════
+function throwBall(type){
+  if(battle.busy||battle.isTrainer)return;
+  if(type==='pokeball'&&inventory.pokeball<=0)return;
+  if(type==='greatball'&&inventory.greatball<=0)return;
+  setBusy(true);
+  if(type==='pokeball')inventory.pokeball--;else inventory.greatball--;
+  updateBattleUI();
+  const en=battle.enemy,hpRatio=en.hp/en.maxHp;
+  const base=type==='greatball'?0.55:0.35;
+  const caught=Math.random()<base+(1-hpRatio)*0.4;
+  const anim=document.getElementById('catchAnim');
+  const ball=document.getElementById('catchBall');
+  const msg=document.getElementById('catchMsg');
+  ball.textContent=type==='greatball'?'🟣':'🔵';
+  msg.textContent='Throwing at '+en.name+'...';
+  anim.classList.add('active');
+  let shakes=0;
+  const iv=setInterval(()=>{
+    ball.style.transform=ball.style.transform==='rotate(20deg)'?'rotate(-20deg)':'rotate(20deg)';
+    if(++shakes>=5){
+      clearInterval(iv);ball.style.transform='none';
+      setTimeout(()=>{
+        if(caught){ball.textContent='⭐';msg.textContent=en.name+' was caught!';}
+        else{ball.textContent='💨';msg.textContent='Oh no! It broke free!';}
+        setTimeout(()=>{
+          anim.classList.remove('active');
+          if(caught){
+            if(party.length<MAX_PARTY){const nm={...en,moves:en.moves.map(m=>({...m}))};nm.hp=Math.max(1,nm.hp);party.push(nm);showNotif(en.name+' caught! 🎉');}
+            else showNotif(en.name+' caught! (Party full)');
+            renderPartyPanel();updateHUD();
+            battle.active=false;
+            setTimeout(()=>document.getElementById('battleScreen').classList.remove('active'),1200);
+          } else {
+            setBattleLog(en.name+' broke free!');
+            setBusy(false);setTimeout(enemyTurn,600);
+          }
+        },900);
+      },400);
+    }
+  },350);
+}
+
+// ════════════════════════════════════════════════
+//  BATTLE – SWITCH
+// ════════════════════════════════════════════════
+function renderSwitchPanel(){
+  const panel=document.getElementById('panel-switch');panel.innerHTML='';
+  party.forEach((p,i)=>{
+    const isLead=i===leadIndex,fainted=p.hp<=0;
+    const div=document.createElement('div');
+    div.className='switch-slot'+(isLead?' is-lead':fainted?' fainted':'');
+    div.innerHTML=`<span style="font-size:1.3rem">${p.sprite}</span>
+      <div><b style="color:#FFD700">${p.name}</b> ${isLead?'(Lead)':''} ${fainted?'(Fainted)':''}<br>
+      <span style="color:#aaa;font-size:10px">Lv${p.level} · HP:${p.hp}/${p.maxHp}</span></div>`;
+    if(!isLead&&!fainted){
+      div.addEventListener('click',()=>{
+        leadIndex=i;battle.busy=false;
+        updateBattleUI();renderPartyPanel();updateHUD();
+        setBattleLog('Go, '+p.name+'!');
+        showTab('fight');
+        setTimeout(enemyTurn,800);
+      });
+    }
+    panel.appendChild(div);
+  });
+}
+
+// ════════════════════════════════════════════════
+//  BATTLE – FLEE (wild only)
+// ════════════════════════════════════════════════
+function fleeBattle(){
+  if(battle.busy||battle.isTrainer)return;
+  setBusy(true);
+  if(Math.random()<0.6){
+    setBattleLog('Got away safely!');
+    setTimeout(()=>{battle.active=false;document.getElementById('battleScreen').classList.remove('active');},900);
+  } else {
+    setBattleLog("Couldn't escape!");
+    setTimeout(()=>{setBusy(false);enemyTurn();},800);
+  }
+}
+
+// ════════════════════════════════════════════════
+//  BATTLE – END (wild)
+// ════════════════════════════════════════════════
+function endBattle(won){
+  battle.active=false;
+  const lead=getLead(),en=battle.enemy;
+  let log='';
+  if(won){
+    player.wins++;
+    const exp=en.level*15;lead.exp+=exp;
+    log=lead.name+' won! +'+exp+' EXP!';
+    while(lead.exp>=lead.expToNext){
+      lead.exp-=lead.expToNext;lead.level++;lead.expToNext=lead.level*20;
+      lead.maxHp+=4;lead.hp=Math.min(lead.hp+6,lead.maxHp);lead.atk+=2;lead.def+=1;
+      log+=' '+lead.name+' grew to Lv.'+lead.level+'! 🎉';
+    }
+    if(player.wins%3===0){inventory.pokeball+=2;log+=' Got 2 Poké Balls!';}
+    if(player.wins%5===0){inventory.greatball++;log+=' Got a Great Ball! 🟣';}
+    showNotif(log);
+  } else {
+    party.forEach(p=>{if(p.hp<=0)p.hp=Math.floor(p.maxHp*.3)+1;});
+    log='All Pokémon fainted! Healed.';showNotif('You blacked out! 💤');
+  }
+  setBattleLog(log);renderPartyPanel();updateHUD();updateBattleUI();setExpBar();
+  setTimeout(()=>document.getElementById('battleScreen').classList.remove('active'),2200);
+}
+
+// ════════════════════════════════════════════════
+//  PARTY PANEL
+// ════════════════════════════════════════════════
+function renderPartyPanel(){
+  const c=document.getElementById('partySlots');c.innerHTML='';
+  for(let i=0;i<MAX_PARTY;i++){
+    const slot=document.createElement('div');
+    if(party[i]){
+      const p=party[i],pct=p.maxHp>0?(p.hp/p.maxHp)*100:0,isLead=i===leadIndex;
+      slot.className='party-slot'+(isLead?' active-lead':'');
+      slot.innerHTML=(isLead?'<div class="lead-badge">LEAD</div>':'')+
+        '<div class="slot-header">'+
+        '<div class="slot-emoji">'+p.sprite+'</div>'+
+        '<div class="slot-info">'+
+        '<div class="slot-name">'+p.name+'</div>'+
+        '<div class="slot-level">Lv'+p.level+(p.hp<=0?' 💀':'')+'</div>'+
+        '<div class="slot-hp-wrap"><div class="slot-hp-bar" style="width:'+pct+'%;background:'+(pct>50?'#4ade80':pct>25?'#facc15':'#ef4444')+'"></div></div>'+
+        '<div class="slot-hp-text">'+p.hp+'/'+p.maxHp+' HP</div>'+
+        '<div class="slot-hp-wrap" style="background:#1a1a3e;margin-top:3px;border:1px solid #334;"><div class="slot-hp-bar" style="width:'+Math.min(100,p.exp/p.expToNext*100).toFixed(1)+'%;background:linear-gradient(90deg,#60a5fa,#a78bfa);box-shadow:0 0 4px #60a5fa66;"></div></div>'+
+        '<div class="slot-hp-text" style="color:#60a5fa;">EXP '+p.exp+'/'+p.expToNext+'</div>'+
+        '</div></div>';
+      if(p.hp>0)slot.onclick=()=>{if(!battle.active){leadIndex=i;renderPartyPanel();updateHUD();}};
+      else slot.style.opacity='0.5';
+    } else {
+      slot.className='party-slot empty';slot.textContent='Empty';
+    }
+    c.appendChild(slot);
+  }
+  document.getElementById('partyInfo').textContent=party.length+'/'+MAX_PARTY+' · 🔵×'+inventory.pokeball+' 🟣×'+inventory.greatball;
+}
+
+function updateHUD(){
+  const lead=getLead();
+  const a=getArea();
+  document.getElementById('hudLead').textContent=lead?lead.name:'—';
+  document.getElementById('hpDisplay').textContent=lead?lead.hp+'/'+lead.maxHp:'—';
+  document.getElementById('lvlDisplay').textContent=lead?lead.level:'—';
+  document.getElementById('stepsDisplay').textContent=player.steps;
+  document.getElementById('areaTag').textContent=a.tag+' '+a.name;
+}
+
+// ════════════════════════════════════════════════
+//  NOTIF
+// ════════════════════════════════════════════════
+let nTimer=null;
+function showNotif(msg){
+  const el=document.getElementById('notif');
+  el.textContent=msg;el.style.display='block';
+  if(nTimer)clearTimeout(nTimer);
+  nTimer=setTimeout(()=>el.style.display='none',3200);
+}
+
+// ════════════════════════════════════════════════
+//  AREA TRANSITION
+// ════════════════════════════════════════════════
+let transitioning=false;
+function doWarp(){
+  if(transitioning)return;
+  transitioning=true;
+  const wt=getArea().warpTarget;
+  const destArea=AREAS[wt.area];
+  const ov=document.getElementById('transitionOverlay');
+  document.getElementById('transitionText').textContent=destArea.tag+' '+destArea.name;
+  document.getElementById('transitionSub').textContent='ENTERING NEW AREA...';
+  ov.classList.add('active');
+  setTimeout(()=>{
+    currentArea=wt.area;
+    player.x=wt.x;player.y=wt.y;
+    player.px=player.x*TILE;player.py=player.y*TILE;
+    moveQueue=null;
+    updateHUD();
+    showAreaBanner(destArea.tag+' '+destArea.name,destArea.grassColor||'#4ade80');
+    setTimeout(()=>{ov.classList.remove('active');transitioning=false;},600);
+  },1200);
+}
+
+let bannerTimer=null;
+function showAreaBanner(text,color){
+  const b=document.getElementById('areaBanner');
+  b.textContent=text;b.style.color=color;
+  b.style.background='rgba(0,0,0,.7)';
+  b.style.textShadow='0 0 10px '+color;
+  b.classList.remove('hidden');
+  if(bannerTimer)clearTimeout(bannerTimer);
+  bannerTimer=setTimeout(()=>b.classList.add('hidden'),2500);
+}
+
+// ════════════════════════════════════════════════
+//  CANVAS SCALING (fullscreen)
+// ════════════════════════════════════════════════
+const canvas=document.getElementById('gameCanvas');
+const ctx=canvas.getContext('2d');
+const gameScale=document.getElementById('gameScale');
+const battleBgCanvas=document.getElementById('battleBg');
+
+function resizeGame(){
+  const hudH=40; // HUD height
+  const partyW=170; // party panel width
+  const availW=window.innerWidth-partyW;
+  const availH=window.innerHeight-hudH;
+  const scaleX=availW/CANVAS_W;
+  const scaleY=availH/CANVAS_H;
+  const scale=Math.min(scaleX,scaleY);
+  const scaledW=CANVAS_W*scale;
+  const scaledH=CANVAS_H*scale;
+  const offX=Math.floor((availW-scaledW)/2);
+  const offY=Math.floor((availH-scaledH)/2);
+
+  canvas.style.transform=`scale(${scale})`;
+  canvas.style.transformOrigin='top left';
+  canvas.style.left=offX+'px';
+  canvas.style.top=offY+'px';
+
+  gameScale.style.transform=`scale(${scale})`;
+  gameScale.style.transformOrigin='top left';
+  gameScale.style.left=offX+'px';
+  gameScale.style.top=offY+'px';
+}
+window.addEventListener('resize',resizeGame);
+let camX=0,camY=0;
+let moveQueue=null,moveProgress=0;
+
+function drawBg(){
+  const a=getArea();
+  const g=ctx.createLinearGradient(0,0,0,CANVAS_H);
+  g.addColorStop(0,a.skyTop||'#87ceeb');
+  g.addColorStop(1,a.skyBot||'#c8f0a8');
+  ctx.fillStyle=g;ctx.fillRect(0,0,CANVAS_W,CANVAS_H);
+}
+
+function drawTile(tx,ty){
+  const type=getMap()[ty][tx];
+  const sx=tx*TILE-camX,sy=ty*TILE-camY;
+  ctx.fillStyle=tileColor(type);
+  ctx.fillRect(sx,sy,TILE,TILE);
+  if(type===T.FLOWER){
+    ctx.fillStyle='#4ade80';ctx.fillRect(sx,sy,TILE,TILE);
+    ctx.fillStyle='#fff';ctx.fillRect(sx+6,sy+8,4,4);ctx.fillRect(sx+18,sy+14,4,4);
+    ctx.fillStyle='#fbbf24';ctx.fillRect(sx+8,sy+6,2,2);ctx.fillRect(sx+20,sy+12,2,2);
+  }
+  if(type===T.TALL){
+    ctx.fillStyle=currentArea==='cave'?'#1e1b4b':'#14532d';
+    ctx.fillRect(sx+3,sy+3,TILE-6,TILE-6);
+    ctx.fillStyle=getArea().tallColor||'#166534';
+    for(let i=0;i<3;i++)ctx.fillRect(sx+5+i*8,sy+5,3,15);
+  }
+  if(type===T.TREE){
+    const ic=currentArea==='cave';
+    ctx.fillStyle=ic?'#1e1b4b':'#14532d';
+    ctx.beginPath();ctx.arc(sx+TILE/2,sy+TILE/2,13,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=ic?'#312e81':'#166534';
+    ctx.beginPath();ctx.arc(sx+TILE/2,sy+TILE/2-3,10,0,Math.PI*2);ctx.fill();
+  }
+  if(type===T.WATER){
+    const wt=Date.now()/1200;
+    ctx.fillStyle='#7dd3fc';ctx.fillRect(sx+2,sy+10+Math.sin(wt+tx)*2,TILE-4,6);
+    ctx.fillStyle='rgba(255,255,255,.2)';ctx.fillRect(sx+6,sy+16+Math.cos(wt+ty)*2,TILE-12,3);
+  }
+  if(type===T.PATH){
+    ctx.fillStyle=getArea().pathColor||'#b08040';ctx.fillRect(sx+1,sy+1,TILE-2,TILE-2);
+    ctx.fillStyle='rgba(0,0,0,.1)';
+    ctx.fillRect(sx+1,sy+1,TILE-2,3);ctx.fillRect(sx+1,sy+TILE-4,TILE-2,3);
+  }
+  if(type===T.SAND){
+    ctx.fillStyle='#fde68a';ctx.fillRect(sx,sy,TILE,TILE);
+    ctx.fillStyle='#fbbf24';
+    for(let i=0;i<4;i++)ctx.fillRect(sx+5+(i%2)*14,sy+5+Math.floor(i/2)*14,4,4);
+  }
+  if(type===T.WARP){
+    const pulse=(Math.sin(Date.now()/400)+1)/2;
+    ctx.fillStyle=`rgba(250,204,21,${.4+pulse*.4})`;ctx.fillRect(sx,sy,TILE,TILE);
+    ctx.strokeStyle='#FFD700';ctx.lineWidth=2;ctx.strokeRect(sx+2,sy+2,TILE-4,TILE-4);
+    ctx.fillStyle='#FFD700';ctx.font='16px serif';ctx.textAlign='center';
+    ctx.fillText('🚪',sx+TILE/2,sy+TILE/2+6);ctx.textAlign='left';
+  }
+  if(type===T.ROCK){
+    ctx.fillStyle='#57534e';ctx.fillRect(sx+3,sy+8,TILE-6,TILE-12);
+    ctx.fillStyle='#78716c';ctx.fillRect(sx+5,sy+6,TILE-10,8);
+    ctx.fillStyle='#a8a29e';ctx.fillRect(sx+7,sy+8,5,4);
+  }
+  if(type===T.CAVE){
+    ctx.fillStyle='#0c0a09';ctx.fillRect(sx,sy,TILE,TILE);
+    ctx.fillStyle='rgba(99,102,241,.15)';
+    for(let i=0;i<3;i++)ctx.fillRect(sx+3+i*10,sy+4,4,TILE-8);
+  }
+  if(type===T.SIGN){
+    ctx.fillStyle='#92400e';ctx.fillRect(sx+10,sy+16,12,12);
+    ctx.fillStyle='#b45309';ctx.fillRect(sx+6,sy+8,20,12);
+    ctx.fillStyle='#fef3c7';ctx.fillRect(sx+8,sy+10,16,8);
+  }
+  ctx.strokeStyle='rgba(0,0,0,.06)';ctx.lineWidth=1;ctx.strokeRect(sx,sy,TILE,TILE);
+}
+
+function drawTrainers(){
+  for(const tr of getTrainersForArea()){
+    const sx=tr.tx*TILE-camX, sy=tr.ty*TILE-camY;
+    const defeated=trainerState[tr.id].defeated;
+
+    // Shadow
+    ctx.fillStyle='rgba(0,0,0,.2)';
+    ctx.beginPath();ctx.ellipse(sx+TILE/2,sy+TILE-3,8,4,0,0,Math.PI*2);ctx.fill();
+
+    // Trainer body (colored rectangle person)
+    if(defeated){
+      ctx.globalAlpha=0.5;
+    }
+    // torso
+    ctx.fillStyle=tr.color;
+    ctx.fillRect(sx+9,sy+12,14,16);
+    // head
+    ctx.fillStyle='#ffddc1';
+    ctx.fillRect(sx+10,sy+3,12,12);
+    // eyes
+    ctx.fillStyle='#333';
+    if(tr.facing!=='up'){
+      ctx.fillRect(sx+12,sy+6,2,2);
+      ctx.fillRect(sx+18,sy+6,2,2);
+    }
+    // hair (little colored block)
+    ctx.fillStyle=tr.color;
+    ctx.fillRect(sx+10,sy+3,12,4);
+    // legs
+    ctx.fillStyle='#374151';
+    ctx.fillRect(sx+10,sy+27,5,7);
+    ctx.fillRect(sx+17,sy+27,5,7);
+    // sprite emoji floating above
+    ctx.font='14px serif';ctx.textAlign='center';
+    ctx.fillText(tr.sprite,sx+TILE/2,sy+1);
+    ctx.textAlign='left';
+
+    // Defeated tick
+    if(defeated){
+      ctx.globalAlpha=1;
+      ctx.fillStyle='#4ade80';ctx.font='bold 14px monospace';ctx.textAlign='center';
+      ctx.fillText('✓',sx+TILE/2,sy-2);ctx.textAlign='left';
+    }
+
+    // Sight ray (subtle) — only if not defeated
+    if(!defeated){
+      const range=tr.sightRange;
+      let rx=tr.tx,ry=tr.ty,rdx=0,rdy=0;
+      if(tr.sightDir==='left') rdx=-1;
+      if(tr.sightDir==='right')rdx=1;
+      if(tr.sightDir==='up')   rdy=-1;
+      if(tr.sightDir==='down') rdy=1;
+      ctx.strokeStyle='rgba(255,100,100,.18)';ctx.lineWidth=2;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath();
+      ctx.moveTo(sx+TILE/2,sy+TILE/2);
+      ctx.lineTo(sx+TILE/2+rdx*range*TILE,sy+TILE/2+rdy*range*TILE);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+}
+
+function drawPlayer(){
+  const px=player.px-camX,py=player.py-camY;
+  const t=Date.now()/200,bob=player.moving?Math.sin(t)*2:0;
+  ctx.fillStyle='rgba(0,0,0,.18)';ctx.beginPath();ctx.ellipse(px+TILE/2,py+TILE-3,8,4,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e63946';ctx.fillRect(px+8,py+10+bob,16,18);
+  ctx.fillStyle='#ffddc1';ctx.fillRect(px+9,py+2+bob,14,13);
+  if(player.dir!=='up'){ctx.fillStyle='#333';ctx.fillRect(px+11,py+5+bob,3,3);ctx.fillRect(px+18,py+5+bob,3,3);}
+  ctx.fillStyle='#c1121f';ctx.fillRect(px+8,py+2+bob,16,5);ctx.fillRect(px+6,py+3+bob,4,4);
+  const leg=player.moving?Math.sin(t)*4:0;
+  ctx.fillStyle='#1d3557';ctx.fillRect(px+9,py+26+bob,6,8-leg);ctx.fillRect(px+17,py+26+bob,6,8+leg);
+}
+
+// ════════════════════════════════════════════════
+//  MOVEMENT
+// ════════════════════════════════════════════════
+function tryMove(dir){
+  let nx=player.x,ny=player.y;
+  if(dir==='up')   ny--;
+  if(dir==='down') ny++;
+  if(dir==='left') nx--;
+  if(dir==='right')nx++;
+  player.dir=dir;
+  if(isWalkable(nx,ny)){
+    moveQueue={fromX:player.x*TILE,fromY:player.y*TILE,toX:nx*TILE,toY:ny*TILE};
+    player.x=nx;player.y=ny;moveProgress=0;
+  }
+}
+
+// ════════════════════════════════════════════════
+//  GAME LOOP
+// ════════════════════════════════════════════════
+let lastTime=0;
+function gameLoop(ts){
+  const dt=Math.min((ts-lastTime)/1000,.1);lastTime=ts;
+
+  if(!battle.active&&!transitioning&&!dialogue.active&&party.length>0){
+    if(!moveQueue){
+      for(const[k,d] of Object.entries(MOVE_KEYS)){if(keys[k]){tryMove(d);break;}}
+    }
+    if(moveQueue){
+      player.moving=true;moveProgress+=dt*5.5;
+      if(moveProgress>=1){
+        player.px=moveQueue.toX;player.py=moveQueue.toY;
+        player.steps++;updateHUD();
+        const tile=getTile(player.x,player.y);
+        const allFainted=party.every(p=>p.hp<=0);
+        moveQueue=null;player.moving=false;
+        if(isWarp(player.x,player.y)){
+          doWarp();
+        } else if(!allFainted&&tile===T.TALL&&Math.random()<0.2){
+          setTimeout(startBattle,80);
+        } else {
+          // check trainer sight every step
+          checkTrainerSight();
+        }
+      } else {
+        player.px=moveQueue.fromX+(moveQueue.toX-moveQueue.fromX)*moveProgress;
+        player.py=moveQueue.fromY+(moveQueue.toY-moveQueue.fromY)*moveProgress;
+      }
+    } else {player.moving=false;}
+  }
+
+  // Camera
+  const tcx=player.px-CANVAS_W/2+TILE/2;
+  const tcy=player.py-CANVAS_H/2+TILE/2;
+  camX=Math.max(0,Math.min(COLS*TILE-CANVAS_W,tcx));
+  camY=Math.max(0,Math.min(ROWS*TILE-CANVAS_H,tcy));
+
+  // Update exclaim position dynamically
+  if(exclamShowing){
+    // find which trainer is shouting
+    for(const tr of getTrainersForArea()){
+      const sx=(tr.tx*TILE-camX)+(TILE/2)-12;
+      const sy=(tr.ty*TILE-camY)-22;
+      exclamShowing.style.left=sx+'px';
+      exclamShowing.style.top=sy+'px';
+    }
+  }
+
+  drawBg();
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)drawTile(c,r);
+  drawTrainers();
+  drawPlayer();
+  requestAnimationFrame(gameLoop);
+}
+
+// ════════════════════════════════════════════════
+//  STARTER SELECTION
+// ════════════════════════════════════════════════
+let selectedStarter=null;
+
+const STARTER_INFO={
+  leafling:{type:'grass', typeColor:'#4ade80', confirmMsg:'LEAFLING wants to be your partner!'},
+  embrite: {type:'fire',  typeColor:'#ef4444', confirmMsg:'EMBRITE is ready to fight for you!'},
+  torrtle: {type:'water', typeColor:'#38bdf8', confirmMsg:'TORRTLE will protect you on your journey!'},
+};
+
+function selectStarter(id){
+  selectedStarter=id;
+  // Highlight selected card
+  document.querySelectorAll('.starter-card').forEach(c=>c.classList.remove('selected'));
+  const info=STARTER_INFO[id];
+  // find clicked card by its type class
+  document.querySelector('.starter-card.'+info.type).classList.add('selected');
+  // show confirm text and button
+  document.getElementById('starterConfirm').textContent=info.confirmMsg;
+  document.getElementById('starterConfirm').style.color=info.typeColor;
+  const btn=document.getElementById('starterChooseBtn');
+  btn.classList.add('visible');
+  btn.style.background=info.typeColor;
+  btn.style.color=(id==='embrite'||id==='torrtle')?'#fff':'#000';
+}
+
+function confirmStarter(){
+  if(!selectedStarter)return;
+  // Make the starter pokemon at level 5
+  party=[makeMon(selectedStarter,5)];
+  leadIndex=0;
+
+  // Animate screen out
+  const screen=document.getElementById('starterScreen');
+  screen.classList.add('fade-out');
+  setTimeout(()=>{
+    screen.style.display='none';
+    // Show professor dialogue then start game
+    startDialogue('PROF. OAK',[
+      'Excellent choice! Take good care of your new partner.',
+      'The world is full of wild Pokémon to catch and trainers to battle.',
+      'Walk through tall dark grass to find wild Pokémon, and use the 🚪 warp to reach new areas.',
+      'Good luck, young trainer! Your adventure begins now!',
+    ], ()=>{
+      showAreaBanner(getArea().tag+' '+getArea().name,'#4ade80');
+      showNotif('Adventure start! You received 5 Poké Balls! 🔵');
+    });
+    renderPartyPanel();
+    updateHUD();
+  },500);
+}
+
+// ════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════
+resizeGame();
+requestAnimationFrame(gameLoop);
+</script>
 </body>
 </html>
