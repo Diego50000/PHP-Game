@@ -1,0 +1,78 @@
+{
+  "players": [
+    {
+      "username": "ash123",
+      "password": "hashedpasswordhere",
+      "lastSaved": 1740345600,
+      "gameState": {
+        "currentZone": 3,
+        "difficulty": "normal",
+        "starter": "embrite",
+        "team": [
+          {
+            "id": "embrite",
+            "name": "EMBRITE",
+            "level": 14,
+            "hp": 62,
+            "maxHp": 78,
+            "atk": 22,
+            "def": 12,
+            "spd": 19,
+            "exp": 120,
+            "expToNext": 280,
+            "status": null
+          },
+          {
+            "id": "sparrow",
+            "name": "SPARROW",
+            "level": 11,
+            "hp": 55,
+            "maxHp": 55,
+            "atk": 17,
+            "def": 11,
+            "spd": 20,
+            "exp": 60,
+            "expToNext": 220,
+            "status": null
+          },
+          {
+            "id": "caterpil",
+            "name": "CATERPIL",
+            "level": 9,
+            "hp": 0,
+            "maxHp": 48,
+            "atk": 12,
+            "def": 10,
+            "spd": 9,
+            "exp": 30,
+            "expToNext": 180,
+            "status": "fainted"
+          }
+        ],
+        "inventory": {
+          "balls": 3,
+          "rareBalls": 1,
+          "potions": 2,
+          "rarePotions": 0
+        },
+        "zonesProgress": {
+          "zone1": {
+            "cleared": true,
+            "creaturesDefeated": 5,
+            "trainerDefeated": true
+          },
+          "zone2": {
+            "cleared": true,
+            "creaturesDefeated": 5,
+            "trainerDefeated": true
+          },
+          "zone3": {
+            "cleared": false,
+            "creaturesDefeated": 8,
+            "trainerDefeated": false
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,3 +1,116 @@
+<?php
+require_once 'functions.php';
+
+// ─────────────────────────────────────────────
+//  SAVE endpoint — called by JS on logout/save
+//  JS sends:  POST  game.php?action=save
+//             Body: JSON { username, gameState }
+// ─────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action']) && $_GET['action'] === 'save') {
+    $body      = json_decode(file_get_contents('php://input'), true);
+    $username  = $body['username']  ?? '';
+    $gameState = $body['gameState'] ?? null;
+
+    if ($username && $gameState) {
+        $ok = savePlayer($username, $gameState);
+        echo json_encode(['success' => $ok]);
+    } else {
+        echo json_encode(['success' => false, 'error' => 'Missing data']);
+    }
+    exit;
+}
+
+// ─────────────────────────────────────────────
+//  LOGIN — form submitted from index.php
+// ─────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header('Location: index.php');
+    exit;
+}
+
+$username   = trim($_POST['playerName']  ?? '');
+$password   =      $_POST['password']    ?? '';
+$difficulty =      $_POST['difficulty']  ?? 'normal';
+
+if (!$username || !$password) {
+    header('Location: index.php');
+    exit;
+}
+
+// Try to find an existing player
+$player = findPlayer($username, $password);
+
+if ($player) {
+    // ── Returning player: load their save ──
+    $gameState   = $player['gameState'];
+    $isNewPlayer = false;
+} else {
+    // ── New player: create their account and start fresh ──
+    $created = createPlayer($username, $password, $difficulty);
+
+    if (!$created) {
+        // Username exists but password was wrong
+        header('Location: index.php?error=wrong_password');
+        exit;
+    }
+
+    $gameState   = null; // JS will handle starter selection for new players
+    $isNewPlayer = true;
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pokequest</title>
+  <!-- your game CSS / JS goes here -->
+</head>
+<body>
+
+<!-- Pass save data to JavaScript -->
+<script>
+  const PLAYER_USERNAME = <?= json_encode($username) ?>;
+  const IS_NEW_PLAYER   = <?= json_encode($isNewPlayer) ?>;
+  const SAVED_STATE     = <?= json_encode($gameState) ?>;  // null if new player
+</script>
+
+<!-- Your game JS loads here and reads the three variables above -->
+<script src="game.js"></script>
+
+<script>
+// ─────────────────────────────────────────────
+//  Save function — call this from your game JS
+//  whenever the player logs out or you want
+//  to checkpoint progress.
+// ─────────────────────────────────────────────
+async function saveGame(gameState) {
+  const response = await fetch('game.php?action=save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username:  PLAYER_USERNAME,
+      gameState: gameState
+    })
+  });
+  const result = await response.json();
+  return result.success;
+}
+
+// Auto-save when the player closes or refreshes the tab
+window.addEventListener('beforeunload', () => {
+  if (typeof getCurrentGameState === 'function') {
+    const state = getCurrentGameState(); // define this in your game JS
+    navigator.sendBeacon(
+      'game.php?action=save',
+      JSON.stringify({ username: PLAYER_USERNAME, gameState: state })
+    );
+  }
+});
+</script>
+
+</body>
+</html>
 <!DOCTYPE html>
 <html lang="en">
 <head>

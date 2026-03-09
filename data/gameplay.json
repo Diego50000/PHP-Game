@@ -1,0 +1,73 @@
+{
+    "players": [
+        {
+            "username": "SuperToady",
+            "password": "$2y$10$MwHdFcovCBRBw1MI5Yni8unilI6uBAW6bwEwN8Tjsnh5i8GLqJC5i",
+            "lastSaved": 1773079733,
+            "gameState": {
+                "currentZone": 1,
+                "difficulty": "normal",
+                "starter": null,
+                "team": [],
+                "inventory": {
+                    "balls": 5,
+                    "rareBalls": 0,
+                    "potions": 2,
+                    "rarePotions": 0
+                },
+                "zonesProgress": {
+                    "zone1": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    },
+                    "zone2": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    },
+                    "zone3": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    },
+                    "zone4": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    },
+                    "zone5": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    },
+                    "zone6": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    },
+                    "zone7": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    },
+                    "zone8": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    },
+                    "zone9": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    },
+                    "zone10": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    }
+                }
+            }
+        }
+    ]
+}
