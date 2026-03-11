@@ -3,68 +3,92 @@
         {
             "username": "SuperToady",
             "password": "$2y$10$2T2AKR.8x2Wq4xKNdX.QROucaPoI1htZHkDUzV6D4Uw2wKTXDHrDW",
-            "lastSaved": 1773080210,
+            "lastSaved": 1773252579,
             "gameState": {
-                "currentZone": 1,
+                "currentZone": "cave",
                 "difficulty": "normal",
-                "starter": null,
-                "team": [],
+                "starter": "leafling",
+                "score": 600,
+                "creaturesDefeated": 1,
+                "zonesCleared": 2,
+                "team": [
+                    {
+                        "id": "leafling",
+                        "name": "LEAFLING",
+                        "level": 11,
+                        "hp": 0,
+                        "maxHp": 78,
+                        "atk": 24,
+                        "def": 14,
+                        "exp": 15,
+                        "expToNext": 220,
+                        "status": "fainted"
+                    },
+                    {
+                        "id": "aquafin",
+                        "name": "AQUAFIN",
+                        "level": 3,
+                        "hp": 0,
+                        "maxHp": 36,
+                        "atk": 9,
+                        "def": 4,
+                        "exp": 0,
+                        "expToNext": 60,
+                        "status": "fainted"
+                    },
+                    {
+                        "id": "frostail",
+                        "name": "FROSTAIL",
+                        "level": 10,
+                        "hp": 0,
+                        "maxHp": 63,
+                        "atk": 17,
+                        "def": 8,
+                        "exp": 120,
+                        "expToNext": 200,
+                        "status": "fainted"
+                    },
+                    {
+                        "id": "sparrow",
+                        "name": "SPARROW",
+                        "level": 12,
+                        "hp": 6,
+                        "maxHp": 66,
+                        "atk": 20,
+                        "def": 9,
+                        "exp": 66,
+                        "expToNext": 240,
+                        "status": null
+                    },
+                    {
+                        "id": "aquafin",
+                        "name": "AQUAFIN",
+                        "level": 11,
+                        "hp": 13,
+                        "maxHp": 68,
+                        "atk": 17,
+                        "def": 8,
+                        "exp": 0,
+                        "expToNext": 220,
+                        "status": null
+                    }
+                ],
                 "inventory": {
-                    "balls": 5,
-                    "rareBalls": 0,
-                    "potions": 2,
+                    "balls": 4,
+                    "rareBalls": 1,
+                    "potions": 0,
                     "rarePotions": 0
                 },
                 "zonesProgress": {
                     "zone1": {
-                        "cleared": false,
-                        "creaturesDefeated": 0,
-                        "trainerDefeated": false
+                        "cleared": true,
+                        "creaturesDefeated": 1,
+                        "trainerDefeated": true
                     },
                     "zone2": {
-                        "cleared": false,
+                        "cleared": true,
                         "creaturesDefeated": 0,
-                        "trainerDefeated": false
-                    },
-                    "zone3": {
-                        "cleared": false,
-                        "creaturesDefeated": 0,
-                        "trainerDefeated": false
-                    },
-                    "zone4": {
-                        "cleared": false,
-                        "creaturesDefeated": 0,
-                        "trainerDefeated": false
-                    },
-                    "zone5": {
-                        "cleared": false,
-                        "creaturesDefeated": 0,
-                        "trainerDefeated": false
-                    },
-                    "zone6": {
-                        "cleared": false,
-                        "creaturesDefeated": 0,
-                        "trainerDefeated": false
-                    },
-                    "zone7": {
-                        "cleared": false,
-                        "creaturesDefeated": 0,
-                        "trainerDefeated": false
-                    },
-                    "zone8": {
-                        "cleared": false,
-                        "creaturesDefeated": 0,
-                        "trainerDefeated": false
-                    },
-                    "zone9": {
-                        "cleared": false,
-                        "creaturesDefeated": 0,
-                        "trainerDefeated": false
-                    },
-                    "zone10": {
-                        "cleared": false,
-                        "creaturesDefeated": 0,
-                        "trainerDefeated": false
+                        "trainerDefeated": true
                     }
                 }
             }

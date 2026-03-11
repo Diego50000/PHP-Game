@@ -114,3 +114,55 @@ function createPlayer($username, $password, $difficulty) {
     writeGameplayFile($data);
     return true;
 }
+
+// ─────────────────────────────────────────────
+//  4. saveLeaderboard
+//     Saves or updates a player's leaderboard
+//     entry in leaderboard.json.
+// ─────────────────────────────────────────────
+
+define('LEADERBOARD_FILE', __DIR__ . '/data/leaderboard.json');
+
+function saveLeaderboard($username, $score, $zonesCleared, $creaturesDefeated, $completionTime) {
+    // Read existing leaderboard
+    if (file_exists(LEADERBOARD_FILE)) {
+        $json = file_get_contents(LEADERBOARD_FILE);
+        $leaderboard = json_decode($json, true) ?? [];
+    } else {
+        $leaderboard = [];
+    }
+
+    // Check if player already has an entry — update if new score is higher
+    $found = false;
+    foreach ($leaderboard as &$entry) {
+        if (strtolower($entry['username']) === strtolower(trim($username))) {
+            $found = true;
+            // Only update if this run has a better score
+            if ($score > $entry['score']) {
+                $entry['score']            = $score;
+                $entry['zonesCleared']     = $zonesCleared;
+                $entry['creaturesDefeated']= $creaturesDefeated;
+                $entry['completionTime']   = $completionTime;
+            }
+            break;
+        }
+    }
+
+    // New player — add fresh entry
+    if (!$found) {
+        $leaderboard[] = [
+            'username'          => trim($username),
+            'score'             => $score,
+            'zonesCleared'      => $zonesCleared,
+            'creaturesDefeated' => $creaturesDefeated,
+            'completionTime'    => $completionTime,
+        ];
+    }
+
+    file_put_contents(
+        LEADERBOARD_FILE,
+        json_encode($leaderboard, JSON_PRETTY_PRINT)
+    );
+
+    return true;
+}

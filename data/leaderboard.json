@@ -1,16 +1,9 @@
 [
-  {
-    "username": "Ash",
-    "score": 1500,
-    "zonesCleared": 3,
-    "creaturesDefeated": 12,
-    "completionTime": "15:20"
-  },
-  {
-    "username": "Gary",
-    "score": 2100,
-    "zonesCleared": 5,
-    "creaturesDefeated": 20,
-    "completionTime": "12:10"
-  }
+    {
+        "username": "SuperToady",
+        "score": 600,
+        "zonesCleared": 2,
+        "creaturesDefeated": 1,
+        "completionTime": "0:56"
+    }
 ]
