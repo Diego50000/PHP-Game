@@ -415,8 +415,9 @@ function getCurrentGameState() {
       rarePotions: 0
     },
     zonesProgress: {
-      zone1: { cleared: trainerState.lass    ? trainerState.lass.defeated    : false, creaturesDefeated: player.wins, trainerDefeated: trainerState.lass    ? trainerState.lass.defeated    : false },
-      zone2: { cleared: trainerState.rockguy ? trainerState.rockguy.defeated : false, creaturesDefeated: 0,           trainerDefeated: trainerState.rockguy ? trainerState.rockguy.defeated : false }
+      zone1: { cleared: trainerState.lass         ? trainerState.lass.defeated         : false, creaturesDefeated: player.wins, trainerDefeated: trainerState.lass         ? trainerState.lass.defeated         : false },
+      zone2: { cleared: trainerState.rockguy      ? trainerState.rockguy.defeated      : false, creaturesDefeated: 0,           trainerDefeated: trainerState.rockguy      ? trainerState.rockguy.defeated      : false },
+      zone3: { cleared: trainerState.mountainguy  ? trainerState.mountainguy.defeated  : false, creaturesDefeated: 0,           trainerDefeated: trainerState.mountainguy  ? trainerState.mountainguy.defeated  : false }
     }
   };
 }
@@ -479,8 +480,9 @@ function loadSavedState(state) {
     leadIndex = 0;
   }
   if (state.zonesProgress) {
-    if (state.zonesProgress.zone1) trainerState.lass.defeated    = state.zonesProgress.zone1.trainerDefeated || false;
-    if (state.zonesProgress.zone2) trainerState.rockguy.defeated = state.zonesProgress.zone2.trainerDefeated || false;
+    if (state.zonesProgress.zone1) trainerState.lass.defeated         = state.zonesProgress.zone1.trainerDefeated || false;
+    if (state.zonesProgress.zone2) trainerState.rockguy.defeated      = state.zonesProgress.zone2.trainerDefeated || false;
+    if (state.zonesProgress.zone3) trainerState.mountainguy.defeated  = state.zonesProgress.zone3.trainerDefeated || false;
   }
   // Recount zonesCleared from actual trainer states so it's always accurate
   zonesCleared = Object.values(trainerState).filter(t => t.defeated).length;
@@ -515,6 +517,16 @@ const TRAINER_DEFS={
     win:'The caves always win! Hahaha!',
     reward:{pokeball:1,greatball:1},
     team:[makePending('pebbler',9),makePending('venomite',8),makePending('zappchu',10)],
+  },
+  mountainguy:{
+    id:'mountainguy',name:'RANGER STONE',sprite:'🤠',color:'#d97706',
+    area:'mountains',tx:7,ty:3,facing:'down',sightDir:'down',sightRange:5,
+    greeting:'You dare challenge the Rocky Mountains? Bold move!',
+    challenge:'My team has been hardened by these peaks. Let\'s go!',
+    defeat:'Unbelievable... you crushed my mountain crew! Take this reward.',
+    win:'The mountains always claim the weak. Try again!',
+    reward:{pokeball:2,greatball:1},
+    team:[makePending('pebbler',15),makePending('dirtmole',16),makePending('stoneback',17)],
   },
 };
 function makePending(id,lvl){return{__pending:true,id,lvl};}
@@ -566,7 +578,28 @@ const AREAS={
       [4,9,9,9,9,9,0,0,0,9,9,9,9,9,4],
       [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
     ],
-    playerStart:{x:2,y:6},warpTarget:{area:'pallet',x:11,y:10},
+    playerStart:{x:2,y:6},warpTarget:{area:'mountains',x:7,y:11},
+  },
+  mountains:{
+    name:'ROCKY MOUNTAINS',tag:'⛰️',skyTop:'#78716c',skyBot:'#d6d3d1',
+    grassColor:'#a8a29e',tallColor:'#57534e',pathColor:'#92400e',
+    wildPool:['pebbler','dirtmole','stoneback'],trainers:['mountainguy'],
+    map:[
+      [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+      [4,8,8,8,8,8,8,8,8,8,8,8,8,8,4],
+      [4,8,0,0,0,0,8,0,0,0,0,0,8,8,4],
+      [4,8,0,3,3,0,8,0,3,3,3,0,8,8,4],
+      [4,8,0,3,8,0,0,0,3,1,3,0,0,8,4],
+      [4,8,0,3,8,8,0,0,3,1,3,0,0,8,4],
+      [4,8,1,3,3,3,3,3,3,3,3,1,0,8,4],
+      [4,8,1,0,0,0,0,0,0,0,0,1,0,8,4],
+      [4,8,0,0,8,0,1,1,1,0,8,0,0,8,4],
+      [4,8,0,0,8,0,1,1,1,0,8,0,0,8,4],
+      [4,8,0,0,0,0,0,0,0,0,0,0,0,8,4],
+      [4,8,8,8,8,8,8,6,8,8,8,8,8,8,4],
+      [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
+    ],
+    playerStart:{x:7,y:10},warpTarget:{area:'cave',x:2,y:6},
   },
 };
 let currentArea='pallet';
@@ -613,6 +646,8 @@ const PDEFS={
   zappchu:  {name:'ZAPPCHU',  sprite:'⚡',baseHp:21,atk:8,def:2, moves:['Thunderbolt','Quick Attack','Thunder Wave','Scratch']},
   frostail: {name:'FROSTAIL', sprite:'🦊',baseHp:23,atk:7,def:3, moves:['Ice Shard','Bite','Tail Whip','Scratch']},
   venomite: {name:'VENOMITE', sprite:'🐍',baseHp:26,atk:6,def:4, moves:['Poison Fang','Wrap','Bite','Harden']},
+  dirtmole: {name:'DIRTMOLE', sprite:'🦔',baseHp:28,atk:9,def:5,  moves:['Dig','Scratch','Rock Throw','Growl']},
+  stoneback:{name:'STONEBACK',sprite:'🦎',baseHp:32,atk:8,def:8,  moves:['Rollout','Rock Throw','Harden','Bite']},
 };
 const MDEFS={
   'Vine Whip':   {power:10,acc:.95,emoji:'🌿'},
@@ -641,6 +676,8 @@ const MDEFS={
   'Tail Whip':   {power:0, acc:1.0,emoji:'🦊',effect:'debuff'},
   'Poison Fang': {power:11,acc:.9, emoji:'🐍'},
   'Wrap':        {power:6, acc:1.0,emoji:'🌀'},
+  'Dig':         {power:12,acc:.85,emoji:'⛏️'},
+  'Slash':       {power:11,acc:.95,emoji:'⚔️'},
 };
 function makeMon(defId,level=1){
   const d=PDEFS[defId];
@@ -861,6 +898,14 @@ function drawBattleBg(a){
   if(currentArea==='pallet'){
     bx.fillStyle='rgba(74,222,128,.12)';
     for(let i=0;i<8;i++){bx.beginPath();bx.arc(40+i*55,360+Math.sin(i)*20,30+i*4,0,Math.PI*2);bx.fill();}
+  } else if(currentArea==='mountains'){
+    // Rocky mountain silhouette
+    bx.fillStyle='rgba(120,113,108,.3)';
+    const peaks=[[0,300],[80,180],[180,240],[260,150],[360,200],[480,260],[480,432],[0,432]];
+    bx.beginPath();peaks.forEach((p,i)=>i===0?bx.moveTo(p[0],p[1]):bx.lineTo(p[0],p[1]));bx.closePath();bx.fill();
+    bx.fillStyle='rgba(168,162,158,.15)';
+    const peaks2=[[0,340],[60,260],[140,310],[240,220],[340,280],[440,230],[480,300],[480,432],[0,432]];
+    bx.beginPath();peaks2.forEach((p,i)=>i===0?bx.moveTo(p[0],p[1]):bx.lineTo(p[0],p[1]));bx.closePath();bx.fill();
   } else {
     bx.fillStyle='rgba(99,102,241,.15)';
     for(let i=0;i<6;i++){bx.beginPath();bx.arc(50+i*70,380,25,0,Math.PI*2);bx.fill();}
@@ -1156,13 +1201,40 @@ function drawTile(tx,ty){
   const type=getMap()[ty][tx];const sx=tx*TILE-camX,sy=ty*TILE-camY;
   ctx.fillStyle=tileColor(type);ctx.fillRect(sx,sy,TILE,TILE);
   if(type===T.FLOWER){ctx.fillStyle='#4ade80';ctx.fillRect(sx,sy,TILE,TILE);ctx.fillStyle='#fff';ctx.fillRect(sx+6,sy+8,4,4);ctx.fillRect(sx+18,sy+14,4,4);ctx.fillStyle='#fbbf24';ctx.fillRect(sx+8,sy+6,2,2);ctx.fillRect(sx+20,sy+12,2,2);}
-  if(type===T.TALL){ctx.fillStyle=currentArea==='cave'?'#1e1b4b':'#14532d';ctx.fillRect(sx+3,sy+3,TILE-6,TILE-6);ctx.fillStyle=getArea().tallColor||'#166534';for(let i=0;i<3;i++)ctx.fillRect(sx+5+i*8,sy+5,3,15);}
-  if(type===T.TREE){const ic=currentArea==='cave';ctx.fillStyle=ic?'#1e1b4b':'#14532d';ctx.beginPath();ctx.arc(sx+TILE/2,sy+TILE/2,13,0,Math.PI*2);ctx.fill();ctx.fillStyle=ic?'#312e81':'#166534';ctx.beginPath();ctx.arc(sx+TILE/2,sy+TILE/2-3,10,0,Math.PI*2);ctx.fill();}
+  if(type===T.TALL){
+    if(currentArea==='mountains'){
+      ctx.fillStyle='#44403c';ctx.fillRect(sx+3,sy+3,TILE-6,TILE-6);
+      ctx.fillStyle='#78716c';for(let i=0;i<3;i++){ctx.fillRect(sx+5+i*8,sy+5,3,12);ctx.fillRect(sx+6+i*8,sy+14,2,5);}
+    } else {
+      ctx.fillStyle=currentArea==='cave'?'#1e1b4b':'#14532d';ctx.fillRect(sx+3,sy+3,TILE-6,TILE-6);
+      ctx.fillStyle=getArea().tallColor||'#166534';for(let i=0;i<3;i++)ctx.fillRect(sx+5+i*8,sy+5,3,15);
+    }
+  }
+  if(type===T.TREE){
+    if(currentArea==='mountains'){
+      // Mountain wall — solid dark rock block
+      ctx.fillStyle='#292524';ctx.fillRect(sx,sy,TILE,TILE);
+      ctx.fillStyle='#44403c';ctx.fillRect(sx+2,sy+2,TILE-4,TILE-8);
+      ctx.fillStyle='#57534e';ctx.fillRect(sx+4,sy+4,8,5);ctx.fillRect(sx+16,sy+6,7,4);
+      ctx.fillStyle='#1c1917';ctx.fillRect(sx+0,sy+TILE-6,TILE,6);
+    } else {
+      const ic=currentArea==='cave';ctx.fillStyle=ic?'#1e1b4b':'#14532d';ctx.beginPath();ctx.arc(sx+TILE/2,sy+TILE/2,13,0,Math.PI*2);ctx.fill();ctx.fillStyle=ic?'#312e81':'#166534';ctx.beginPath();ctx.arc(sx+TILE/2,sy+TILE/2-3,10,0,Math.PI*2);ctx.fill();
+    }
+  }
   if(type===T.WATER){const wt=Date.now()/1200;ctx.fillStyle='#7dd3fc';ctx.fillRect(sx+2,sy+10+Math.sin(wt+tx)*2,TILE-4,6);ctx.fillStyle='rgba(255,255,255,.2)';ctx.fillRect(sx+6,sy+16+Math.cos(wt+ty)*2,TILE-12,3);}
   if(type===T.PATH){ctx.fillStyle=getArea().pathColor||'#b08040';ctx.fillRect(sx+1,sy+1,TILE-2,TILE-2);ctx.fillStyle='rgba(0,0,0,.1)';ctx.fillRect(sx+1,sy+1,TILE-2,3);ctx.fillRect(sx+1,sy+TILE-4,TILE-2,3);}
   if(type===T.SAND){ctx.fillStyle='#fde68a';ctx.fillRect(sx,sy,TILE,TILE);ctx.fillStyle='#fbbf24';for(let i=0;i<4;i++)ctx.fillRect(sx+5+(i%2)*14,sy+5+Math.floor(i/2)*14,4,4);}
   if(type===T.WARP){const pulse=(Math.sin(Date.now()/400)+1)/2;ctx.fillStyle=`rgba(250,204,21,${.4+pulse*.4})`;ctx.fillRect(sx,sy,TILE,TILE);ctx.strokeStyle='#FFD700';ctx.lineWidth=2;ctx.strokeRect(sx+2,sy+2,TILE-4,TILE-4);ctx.fillStyle='#FFD700';ctx.font='16px serif';ctx.textAlign='center';ctx.fillText('🚪',sx+TILE/2,sy+TILE/2+6);ctx.textAlign='left';}
-  if(type===T.ROCK){ctx.fillStyle='#57534e';ctx.fillRect(sx+3,sy+8,TILE-6,TILE-12);ctx.fillStyle='#78716c';ctx.fillRect(sx+5,sy+6,TILE-10,8);ctx.fillStyle='#a8a29e';ctx.fillRect(sx+7,sy+8,5,4);}
+  if(type===T.ROCK){
+    if(currentArea==='mountains'){
+      ctx.fillStyle='#44403c';ctx.fillRect(sx+2,sy+6,TILE-4,TILE-10);
+      ctx.fillStyle='#78716c';ctx.fillRect(sx+4,sy+4,TILE-8,10);
+      ctx.fillStyle='#a8a29e';ctx.fillRect(sx+6,sy+6,7,5);ctx.fillRect(sx+16,sy+8,5,3);
+      ctx.fillStyle='#292524';ctx.fillRect(sx+2,sy+TILE-8,TILE-4,4);
+    } else {
+      ctx.fillStyle='#57534e';ctx.fillRect(sx+3,sy+8,TILE-6,TILE-12);ctx.fillStyle='#78716c';ctx.fillRect(sx+5,sy+6,TILE-10,8);ctx.fillStyle='#a8a29e';ctx.fillRect(sx+7,sy+8,5,4);
+    }
+  }
   if(type===T.CAVE){ctx.fillStyle='#0c0a09';ctx.fillRect(sx,sy,TILE,TILE);ctx.fillStyle='rgba(99,102,241,.15)';for(let i=0;i<3;i++)ctx.fillRect(sx+3+i*10,sy+4,4,TILE-8);}
   if(type===T.SIGN){ctx.fillStyle='#92400e';ctx.fillRect(sx+10,sy+16,12,12);ctx.fillStyle='#b45309';ctx.fillRect(sx+6,sy+8,20,12);ctx.fillStyle='#fef3c7';ctx.fillRect(sx+8,sy+10,16,8);}
   ctx.strokeStyle='rgba(0,0,0,.06)';ctx.lineWidth=1;ctx.strokeRect(sx,sy,TILE,TILE);

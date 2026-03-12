@@ -3,13 +3,13 @@
         {
             "username": "SuperToady",
             "password": "$2y$10$2T2AKR.8x2Wq4xKNdX.QROucaPoI1htZHkDUzV6D4Uw2wKTXDHrDW",
-            "lastSaved": 1773252579,
+            "lastSaved": 1773253047,
             "gameState": {
                 "currentZone": "cave",
                 "difficulty": "normal",
                 "starter": "leafling",
-                "score": 600,
-                "creaturesDefeated": 1,
+                "score": 800,
+                "creaturesDefeated": 3,
                 "zonesCleared": 2,
                 "team": [
                     {
@@ -52,24 +52,24 @@
                         "id": "sparrow",
                         "name": "SPARROW",
                         "level": 12,
-                        "hp": 6,
+                        "hp": 0,
                         "maxHp": 66,
                         "atk": 20,
                         "def": 9,
                         "exp": 66,
                         "expToNext": 240,
-                        "status": null
+                        "status": "fainted"
                     },
                     {
                         "id": "aquafin",
                         "name": "AQUAFIN",
-                        "level": 11,
-                        "hp": 13,
-                        "maxHp": 68,
-                        "atk": 17,
-                        "def": 8,
-                        "exp": 0,
-                        "expToNext": 220,
+                        "level": 12,
+                        "hp": 1,
+                        "maxHp": 72,
+                        "atk": 19,
+                        "def": 9,
+                        "exp": 80,
+                        "expToNext": 240,
                         "status": null
                     }
                 ],
@@ -82,13 +82,68 @@
                 "zonesProgress": {
                     "zone1": {
                         "cleared": true,
-                        "creaturesDefeated": 1,
+                        "creaturesDefeated": 2,
                         "trainerDefeated": true
                     },
                     "zone2": {
                         "cleared": true,
                         "creaturesDefeated": 0,
                         "trainerDefeated": true
+                    },
+                    "zone3": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    }
+                }
+            }
+        },
+        {
+            "username": "SuperToad",
+            "password": "$2y$10$YZIrJXh48Y\/PjKBUDVpigOsirnWMgllWuUhLzWTpTh1MfCaWVVDSm",
+            "lastSaved": 1773253090,
+            "gameState": {
+                "currentZone": "cave",
+                "difficulty": "normal",
+                "starter": "leafling",
+                "score": 100,
+                "creaturesDefeated": 1,
+                "zonesCleared": 0,
+                "team": [
+                    {
+                        "id": "leafling",
+                        "name": "LEAFLING",
+                        "level": 5,
+                        "hp": 37,
+                        "maxHp": 54,
+                        "atk": 12,
+                        "def": 8,
+                        "exp": 60,
+                        "expToNext": 100,
+                        "status": null
+                    }
+                ],
+                "inventory": {
+                    "balls": 5,
+                    "rareBalls": 0,
+                    "potions": 0,
+                    "rarePotions": 0
+                },
+                "zonesProgress": {
+                    "zone1": {
+                        "cleared": false,
+                        "creaturesDefeated": 1,
+                        "trainerDefeated": false
+                    },
+                    "zone2": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
+                    },
+                    "zone3": {
+                        "cleared": false,
+                        "creaturesDefeated": 0,
+                        "trainerDefeated": false
                     }
                 }
             }
