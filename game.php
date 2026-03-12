@@ -491,7 +491,7 @@ function loadSavedState(state) {
 // ════════════════════════════════════════════════
 //  CONSTANTS
 // ════════════════════════════════════════════════
-const T={GRASS:0,TALL:1,WATER:2,PATH:3,TREE:4,SAND:5,WARP:6,SIGN:7,ROCK:8,CAVE:9,FLOWER:10,SNOW:11};
+const T={GRASS:0,TALL:1,WATER:2,PATH:3,TREE:4,SAND:5,WARP:6,SIGN:7,ROCK:8,CAVE:9,FLOWER:10,SNOW:11,HEAL:12};
 const TILE=32,CANVAS_W=480,CANVAS_H=432,COLS=15,ROWS=13;
 
 // ════════════════════════════════════════════════
@@ -557,7 +557,10 @@ const AREAS={
       [4,0,0,3,3,3,3,3,3,3,3,6,0,0,4],
       [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
     ],
-    playerStart:{x:7,y:6},warpTarget:{area:'cave',x:2,y:6},
+    playerStart:{x:7,y:6},
+    warps:[
+      {tx:11,ty:11, area:'cave', x:2, y:6},
+    ],
   },
   cave:{
     name:'CRYSTAL CAVE',tag:'🏔️',skyTop:'#1a0a2e',skyBot:'#2d1a4e',
@@ -570,7 +573,7 @@ const AREAS={
       [4,9,0,1,0,9,0,1,1,9,0,1,0,9,4],
       [4,9,0,1,0,0,0,0,0,0,0,1,0,9,4],
       [4,9,0,0,0,3,3,3,3,3,0,0,0,9,4],
-      [4,6,0,0,0,3,8,8,8,3,0,0,0,9,4],
+      [4,6,0,0,0,3,8,8,8,3,0,0,0,6,4],
       [4,9,0,0,0,3,8,8,8,3,0,0,0,9,4],
       [4,9,0,1,0,3,3,3,3,3,0,1,0,9,4],
       [4,9,0,1,0,0,0,0,0,0,0,1,0,9,4],
@@ -578,7 +581,11 @@ const AREAS={
       [4,9,9,9,9,9,0,0,0,9,9,9,9,9,4],
       [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
     ],
-    playerStart:{x:2,y:6},warpTarget:{area:'mountains',x:7,y:11},
+    playerStart:{x:2,y:6},
+    warps:[
+      {tx:1, ty:6, area:'pallet',    x:11, y:10},
+      {tx:13,ty:6, area:'mountains', x:7,  y:11},
+    ],
   },
   mountains:{
     name:'ROCKY MOUNTAINS',tag:'⛰️',skyTop:'#78716c',skyBot:'#d6d3d1',
@@ -595,11 +602,14 @@ const AREAS={
       [4,8,1,0,0,0,0,0,0,0,0,1,0,8,4],
       [4,8,0,0,8,0,1,1,1,0,8,0,0,8,4],
       [4,8,0,0,8,0,1,1,1,0,8,0,0,8,4],
-      [4,8,0,0,0,0,0,0,0,0,0,0,0,8,4],
+      [4,8,0,0,0,0,0,12,0,0,0,0,0,8,4],
       [4,8,8,8,8,8,8,6,8,8,8,8,8,8,4],
       [4,4,4,4,4,4,4,4,4,4,4,4,4,4,4],
     ],
-    playerStart:{x:7,y:10},warpTarget:{area:'cave',x:2,y:6},
+    playerStart:{x:7,y:10},
+    warps:[
+      {tx:7,ty:11, area:'cave', x:13, y:6},
+    ],
   },
 };
 let currentArea='pallet';
@@ -625,6 +635,7 @@ function tileColor(type){
     case T.CAVE:   return '#1c1917';
     case T.FLOWER: return '#4ade80';
     case T.SNOW:   return '#e0f2fe';
+    case T.HEAL:   return '#be185d';
     default:       return '#222';
   }
 }
@@ -786,6 +797,30 @@ function isWalkable(tx,ty){
   return true;
 }
 function isWarp(tx,ty){return getTile(tx,ty)===T.WARP;}
+// ════════════════════════════════════════════════
+//  HEAL PAD
+// ════════════════════════════════════════════════
+let lastHealTime = 0;
+function triggerHeal(){
+  // Cooldown of 3s so it doesn't spam every frame
+  const now = Date.now();
+  if(now - lastHealTime < 3000) return;
+  lastHealTime = now;
+
+  const needsHeal = party.some(p => p.hp < p.maxHp);
+  if(!needsHeal) return;
+
+  party.forEach(p => { p.hp = p.maxHp; });
+  renderPartyPanel();
+  updateHUD();
+  showNotif('✨ Your team was fully healed! ✨');
+  showAreaBanner('✨ HEALING SPRING ✨', '#f9a8d4');
+}
+
+function getWarpAt(tx,ty){
+  const warps=getArea().warps||[];
+  return warps.find(w=>w.tx===tx&&w.ty===ty)||null;
+}
 
 // ════════════════════════════════════════════════
 //  TRAINER SIGHT
@@ -1144,8 +1179,11 @@ function showNotif(msg){
 // ════════════════════════════════════════════════
 let transitioning=false;
 function doWarp(){
-  if(transitioning)return;transitioning=true;
-  const wt=getArea().warpTarget,destArea=AREAS[wt.area];
+  if(transitioning)return;
+  const wt=getWarpAt(player.x,player.y);
+  if(!wt)return;
+  transitioning=true;
+  const destArea=AREAS[wt.area];
   const ov=document.getElementById('transitionOverlay');
   document.getElementById('transitionText').textContent=destArea.tag+' '+destArea.name;
   document.getElementById('transitionSub').textContent='ENTERING NEW AREA...';
@@ -1155,7 +1193,7 @@ function doWarp(){
     player.px=player.x*TILE;player.py=player.y*TILE;moveQueue=null;
     updateHUD();showAreaBanner(destArea.tag+' '+destArea.name,destArea.grassColor||'#4ade80');
     setTimeout(()=>{ov.classList.remove('active');transitioning=false;},600);
-    saveGame(getCurrentGameState()); // auto-save on area change
+    saveGame(getCurrentGameState());
   },1200);
 }
 let bannerTimer=null;
@@ -1237,6 +1275,16 @@ function drawTile(tx,ty){
   }
   if(type===T.CAVE){ctx.fillStyle='#0c0a09';ctx.fillRect(sx,sy,TILE,TILE);ctx.fillStyle='rgba(99,102,241,.15)';for(let i=0;i<3;i++)ctx.fillRect(sx+3+i*10,sy+4,4,TILE-8);}
   if(type===T.SIGN){ctx.fillStyle='#92400e';ctx.fillRect(sx+10,sy+16,12,12);ctx.fillStyle='#b45309';ctx.fillRect(sx+6,sy+8,20,12);ctx.fillStyle='#fef3c7';ctx.fillRect(sx+8,sy+10,16,8);}
+  if(type===T.HEAL){
+    // Glowing pink healing pad
+    const hp=(Math.sin(Date.now()/600)+1)/2;
+    ctx.fillStyle=`rgba(236,72,153,${0.3+hp*0.4})`;ctx.fillRect(sx,sy,TILE,TILE);
+    ctx.strokeStyle='#f9a8d4';ctx.lineWidth=2;ctx.strokeRect(sx+2,sy+2,TILE-4,TILE-4);
+    // Cross symbol
+    ctx.fillStyle=`rgba(255,255,255,${0.7+hp*0.3})`;
+    ctx.fillRect(sx+13,sy+6,6,20);
+    ctx.fillRect(sx+6,sy+13,20,6);
+  }
   ctx.strokeStyle='rgba(0,0,0,.06)';ctx.lineWidth=1;ctx.strokeRect(sx,sy,TILE,TILE);
 }
 function drawTrainers(){
@@ -1297,6 +1345,7 @@ function gameLoop(ts){
         const tile=getTile(player.x,player.y);const allFainted=party.every(p=>p.hp<=0);
         moveQueue=null;player.moving=false;
         if(isWarp(player.x,player.y)){doWarp();}
+        else if(tile===T.HEAL){triggerHeal();}
         else if(!allFainted&&tile===T.TALL&&Math.random()<0.2){setTimeout(startBattle,80);}
         else{checkTrainerSight();}
       } else {player.px=moveQueue.fromX+(moveQueue.toX-moveQueue.fromX)*moveProgress;player.py=moveQueue.fromY+(moveQueue.toY-moveQueue.fromY)*moveProgress;}
