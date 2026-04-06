@@ -92,7 +92,8 @@ function createPlayer($username, $password, $difficulty) {
             'inventory'    => [
                 'balls'       => 5,
                 'rareBalls'   => 0,
-                'potions'     => 2,
+                'potions'     => 5,
+                'revives'     => 5,
                 'rarePotions' => 0,
             ],
             'zonesProgress' => [

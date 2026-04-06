@@ -1,16 +1,30 @@
 [
     {
         "username": "SuperToady",
-        "score": 2400,
-        "zonesCleared": 4,
-        "creaturesDefeated": 9,
-        "completionTime": "2:52"
+        "score": 3500,
+        "zonesCleared": 5,
+        "creaturesDefeated": 10,
+        "completionTime": "0:27"
     },
     {
         "username": "SuperToad",
+        "score": 500,
+        "zonesCleared": 1,
+        "creaturesDefeated": 0,
+        "completionTime": "1:09"
+    },
+    {
+        "username": "SuperTo",
         "score": 100,
         "zonesCleared": 0,
         "creaturesDefeated": 1,
-        "completionTime": "0:34"
+        "completionTime": "0:14"
+    },
+    {
+        "username": "SuperT",
+        "score": 200,
+        "zonesCleared": 0,
+        "creaturesDefeated": 2,
+        "completionTime": "3:10"
     }
 ]
