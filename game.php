@@ -872,7 +872,7 @@ function setBusy(v){
 // ════════════════════════════════════════════════
 function playerAttack(idx){
   if(battle.busy)return;const lead=getLead();
-  if(!lead||lead.hp<=0){setBattleLog((lead?lead.name:'Your creature')+' has fainted! Switch first.');showTab('switch');return;}
+  if(!lead||lead.hp<=0){setBattleLog((lead?lead.name:'Your creature')+' has fainted! Switch first.');battle._forcedSwitch=true;showTab('switch');return;}
   const mv=lead.moves[idx];if(!mv)return;setBusy(true);
   if(Math.random()>mv.acc){setBattleLog(lead.name+' used '+mv.name+'... but missed!');setTimeout(enemyTurn,1100);return;}
   let dmg=0;
@@ -935,7 +935,7 @@ function enemyTurn(){
       if(battle.isTrainer)setTimeout(()=>endTrainerBattle(false),1100);
       else if(battle.isBoss)setTimeout(()=>endMiniBoss(false),1100);
       else setTimeout(()=>endBattle(false),1100);
-    } else {setBattleLog(lead.name+' fainted! Switch your Pokémon!');showTab('switch');setBusy(false);}
+    } else {setBattleLog(lead.name+' fainted! Switch your Pokémon!');battle._forcedSwitch=true;showTab('switch');setBusy(false);}
     return;
   }
   setBusy(false);
@@ -948,8 +948,8 @@ function throwBall(type){
   if(battle.busy||battle.isTrainer||battle.isBoss)return;
   if(type==='pokeball'&&inventory.pokeball<=0)return;if(type==='greatball'&&inventory.greatball<=0)return;
   setBusy(true);if(type==='pokeball')inventory.pokeball--;else inventory.greatball--;updateBattleUI();
-  const en=battle.enemy,hpRatio=en.hp/en.maxHp,base=type==='greatball'?0.55:0.35;
-  const caught=Math.random()<base+(1-hpRatio)*0.4;
+  const en=battle.enemy,hpRatio=en.hp/en.maxHp,base=type==='greatball'?0.75:0.55;
+  const caught=Math.random()<Math.min(0.98,base+(1-hpRatio)*0.35);
   const anim=document.getElementById('catchAnim'),ball=document.getElementById('catchBall'),msg=document.getElementById('catchMsg');
   ball.textContent=type==='greatball'?'🟣':'🔵';msg.textContent='Throwing at '+en.name+'...';anim.classList.add('active');
   let shakes=0;
@@ -988,18 +988,34 @@ function renderSwitchPanel(){
           inventory.revive--;
           p.hp=Math.floor(p.maxHp*0.5);
           battle._revivedMode=false;
+          const wasForcedSwitch=battle._forcedSwitch||false;
+          battle._forcedSwitch=false;
           updateBattleUI();renderPartyPanel();updateHUD();
-          setBattleLog('💊 '+p.name+' was revived to '+p.hp+' HP!');
+          setBattleLog('💊 '+p.name+' was revived! '+(wasForcedSwitch?'Your turn!':'Enemy attacks next!'));
           showTab('fight');
           setBusy(false);
-          // Enemy gets a turn after revive
-          setTimeout(enemyTurn,800);
+          // If revived after a faint, player goes first; if used voluntarily, enemy gets a turn
+          if(!wasForcedSwitch) setTimeout(enemyTurn,800);
         });
       }
     } else {
       div.className='switch-slot'+(isLead?' is-lead':fainted?' fainted':'');
       div.innerHTML=`<span style="font-size:1.3rem">${p.sprite}</span><div><b style="color:#FFD700">${p.name}</b> ${isLead?'(Lead)':''} ${fainted?'(Fainted)':''}<br><span style="color:#aaa;font-size:10px">Lv${p.level} · HP:${p.hp}/${p.maxHp}</span></div>`;
-      if(!isLead&&!fainted)div.addEventListener('click',()=>{leadIndex=i;battle.busy=false;updateBattleUI();renderPartyPanel();updateHUD();setBattleLog('Go, '+p.name+'!');showTab('fight');setTimeout(enemyTurn,800);});
+      if(!isLead&&!fainted)div.addEventListener('click',()=>{
+          leadIndex=i;battle.busy=false;updateBattleUI();renderPartyPanel();updateHUD();
+          if(battle._forcedSwitch){
+            // Creature fainted — player goes first with the new one
+            battle._forcedSwitch=false;
+            setBattleLog('Go, '+p.name+'! Your turn!');
+            showTab('fight');
+            // No enemy turn — player attacks first
+          } else {
+            // Voluntary mid-battle switch — enemy gets a free turn
+            setBattleLog('Go, '+p.name+'!');
+            showTab('fight');
+            setTimeout(enemyTurn,800);
+          }
+        });
     }
     panel.appendChild(div);
   });
