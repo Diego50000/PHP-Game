@@ -61,23 +61,25 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Co
 #saveBtn{background:linear-gradient(135deg,#7c3aed,#4f46e5);border:none;border-radius:6px;color:#fff;font-family:'Courier New',monospace;font-size:11px;padding:3px 10px;cursor:pointer;letter-spacing:1px;transition:transform .15s,box-shadow .15s;}
 #saveBtn:hover{transform:scale(1.05);box-shadow:0 0 10px #7c3aed88;}
 #saveBtn:disabled{opacity:.4;cursor:default;transform:none;}
-#partyPanel{position:fixed;right:0;top:0;bottom:40px;width:170px;background:rgba(22,33,62,.96);border-left:3px solid #FFD700;padding:10px;overflow-y:auto;z-index:100;}
-#partyPanel h2{color:#FFD700;font-size:.85rem;margin-bottom:7px;text-align:center;letter-spacing:2px;border-bottom:2px solid #FFD70044;padding-bottom:5px;}
-.party-slot{background:#0f3460;border:2px solid #334;border-radius:7px;padding:6px;margin-bottom:5px;cursor:pointer;transition:border-color .2s,background .2s;position:relative;}
+#logoutBtn{background:linear-gradient(135deg,#1f2937,#111827);border:1px solid #374151;border-radius:6px;color:#9ca3af;font-family:'Courier New',monospace;font-size:11px;padding:3px 10px;cursor:pointer;letter-spacing:1px;transition:all .15s;}
+#logoutBtn:hover{border-color:#ef4444;color:#ef4444;box-shadow:0 0 8px rgba(239,68,68,.3);}
+#partyPanel{position:fixed;right:0;top:0;bottom:40px;width:240px;background:rgba(22,33,62,.96);border-left:3px solid #FFD700;padding:12px;overflow-y:auto;z-index:100;}
+#partyPanel h2{color:#FFD700;font-size:.95rem;margin-bottom:9px;text-align:center;letter-spacing:2px;border-bottom:2px solid #FFD70044;padding-bottom:6px;}
+.party-slot{background:#0f3460;border:2px solid #334;border-radius:8px;padding:9px;margin-bottom:7px;cursor:pointer;transition:border-color .2s,background .2s;position:relative;}
 .party-slot:hover{border-color:#FFD700;}
 .party-slot.active-lead{border-color:#4ade80;background:#0a2a1a;}
 .party-slot.empty{opacity:.3;cursor:default;border-style:dashed;display:flex;align-items:center;justify-content:center;font-size:10px;color:#555;min-height:40px;}
 .party-slot.empty:hover{border-color:#334;}
 .slot-header{display:flex;align-items:center;gap:4px;}
-.slot-emoji{font-size:1.2rem;}
+.slot-emoji{font-size:1.6rem;}
 .slot-info{flex:1;min-width:0;}
-.slot-name{font-size:10px;font-weight:bold;color:#FFD700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.slot-level{font-size:9px;color:#aaa;}
-.slot-hp-wrap{background:#333;border-radius:3px;height:4px;margin-top:3px;overflow:hidden;}
+.slot-name{font-size:12px;font-weight:bold;color:#FFD700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.slot-level{font-size:11px;color:#aaa;}
+.slot-hp-wrap{background:#333;border-radius:3px;height:6px;margin-top:4px;overflow:hidden;}
 .slot-hp-bar{height:100%;border-radius:3px;transition:width .3s;}
-.slot-hp-text{font-size:8px;color:#aaa;margin-top:1px;}
-.lead-badge{position:absolute;top:2px;right:2px;background:#4ade80;color:#000;font-size:7px;padding:1px 3px;border-radius:2px;font-weight:bold;}
-#partyInfo{font-size:9px;color:#666;text-align:center;margin-top:4px;}
+.slot-hp-text{font-size:10px;color:#aaa;margin-top:2px;}
+.lead-badge{position:absolute;top:3px;right:3px;background:#4ade80;color:#000;font-size:9px;padding:2px 5px;border-radius:3px;font-weight:bold;}
+#partyInfo{font-size:10px;color:#666;text-align:center;margin-top:6px;}
 #areaBanner{position:absolute;top:0;left:0;width:100%;text-align:center;padding:10px 0;font-size:1rem;font-weight:bold;letter-spacing:3px;pointer-events:none;z-index:50;transition:opacity .5s;}
 #areaBanner.hidden{opacity:0;}
 #dialogueBox{display:none;position:absolute;bottom:0;left:0;width:100%;z-index:40;background:rgba(10,20,40,.97);border-top:3px solid #FFD700;padding:14px 18px 12px;}
@@ -347,6 +349,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Co
   <div>🏆 <span id="scoreDisplay">0</span>pts</div>
   <div><span id="areaTag">🌿 PALLET PLAINS</span></div>
   <div><button id="saveBtn" onclick="manualSave()">💾 SAVE</button></div>
+  <div><button id="logoutBtn" onclick="logoutGame()">🚪 EXIT</button></div>
   <div style="font-size:10px;color:#555;">WASD/Arrows · Space=talk</div>
 </div>
 <div id="partyPanel">
@@ -513,8 +516,18 @@ let party=[],leadIndex=0;
 const inventory={pokeball:5,greatball:0,potion:5,revive:5};
 const player={x:7,y:6,px:7*TILE,py:6*TILE,moving:false,dir:'down',steps:0,wins:0};
 function getLead(){return party[leadIndex]||null;}
-let score=0,creaturesDefeated=0,zonesCleared=0,gameStartTime=Date.now();
-function getElapsedTime(){const s=Math.floor((Date.now()-gameStartTime)/1000);return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+let score=0,creaturesDefeated=0,zonesCleared=0;
+// Timer: tracks total seconds played across sessions (survives page reloads)
+let elapsedSeconds=0;      // accumulated seconds from previous sessions
+let sessionStart=Date.now(); // when this session started
+
+function getElapsedTime(){
+  const total=elapsedSeconds+Math.floor((Date.now()-sessionStart)/1000);
+  return Math.floor(total/60)+':'+String(total%60).padStart(2,'0');
+}
+function getTotalSeconds(){
+  return elapsedSeconds+Math.floor((Date.now()-sessionStart)/1000);
+}
 function addScore(n){score+=n;const el=document.getElementById('scoreDisplay');if(el)el.textContent=score;}
 async function pushLeaderboard(){
   await fetch('game.php?action=leaderboard',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -528,7 +541,7 @@ const battle={active:false,enemy:null,busy:false,isTrainer:false,isBoss:false,tr
 function getCurrentGameState(){
   return{
     currentZone:currentArea,difficulty:'normal',starter:party.length>0?party[0].id:null,
-    score,creaturesDefeated,zonesCleared,
+    score,creaturesDefeated,zonesCleared,elapsedSeconds:getTotalSeconds(),
     team:party.map(p=>({id:p.id,name:p.name,level:p.level,hp:p.hp,maxHp:p.maxHp,atk:p.atk,def:p.def,exp:p.exp,expToNext:p.expToNext,status:p.hp<=0?'fainted':null})),
     // FIX: potions saved correctly (was hardcoded 0)
     inventory:{balls:inventory.pokeball,rareBalls:inventory.greatball,potions:inventory.potion,revives:inventory.revive,rarePotions:0},
@@ -550,6 +563,11 @@ async function saveGame(gs){
   finally{if(btn)btn.disabled=false;}
 }
 function manualSave(){saveGame(getCurrentGameState());}
+async function logoutGame(){
+  // Save first then redirect to login
+  await saveGame(getCurrentGameState());
+  window.location.href='index.php';
+}
 window.addEventListener('beforeunload',()=>{navigator.sendBeacon('game.php?action=save',JSON.stringify({username:PLAYER_USERNAME,gameState:getCurrentGameState()}));});
 
 function loadSavedState(state){
@@ -563,6 +581,7 @@ function loadSavedState(state){
     inventory.revive  =state.inventory.revives!==undefined?state.inventory.revives:5;
   }
   if(state.score!==undefined){score=state.score;const el=document.getElementById('scoreDisplay');if(el)el.textContent=score;}
+  if(state.elapsedSeconds!==undefined){elapsedSeconds=state.elapsedSeconds;sessionStart=Date.now();}
   if(state.creaturesDefeated!==undefined)creaturesDefeated=state.creaturesDefeated;
   if(state.zonesCleared!==undefined)zonesCleared=state.zonesCleared;
   if(state.team&&state.team.length>0){
@@ -719,6 +738,7 @@ function hideExclaim(){if(exclamShowing){exclamShowing.remove();exclamShowing=nu
 // ════════════════════════════════════════════════
 function beginTrainerBattle(tr){
   const team=tr.team.map(resolvePending);tr.team=team;const freshTeam=team.map(m=>makeMon(m.id,m.level));
+  const _lead2=getLead();if(_lead2){_lead2._hardenCap=0;_lead2._howlCap=0;}
   battle.isTrainer=true;battle.isBoss=false;battle.trainer=tr;battle.trainerTeam=freshTeam;
   battle.trainerMonIdx=0;battle.enemy=freshTeam[0];battle.active=true;battle.busy=false;
   document.getElementById('battleTitle').textContent='⚔️ TRAINER BATTLE!';
@@ -791,6 +811,8 @@ function startBattle(){
     : Math.max(1,lead.level+Math.floor(Math.random()*4)-2);
   const lvl=baseLvl;
   const defId=a.wildPool[Math.floor(Math.random()*a.wildPool.length)];
+  // Reset buff caps on the lead when a new battle starts
+  const _lead=getLead();if(_lead){_lead._hardenCap=0;_lead._howlCap=0;}
   battle.isTrainer=false;battle.isBoss=false;battle.enemy=makeMon(defId,lvl);battle.active=true;battle.busy=false;
   document.getElementById('battleTitle').textContent='⚔️ WILD BATTLE!';
   document.getElementById('trainerStrip').classList.remove('active');
@@ -877,7 +899,21 @@ function playerAttack(idx){
   if(Math.random()>mv.acc){setBattleLog(lead.name+' used '+mv.name+'... but missed!');setTimeout(enemyTurn,1100);return;}
   let dmg=0;
   if(mv.power>0){dmg=Math.max(1,Math.floor(mv.power+lead.atk-battle.enemy.def+Math.random()*3));battle.enemy.hp=Math.max(0,battle.enemy.hp-dmg);}
-  if(mv.effect==='buff')setBattleLog(lead.name+' raised its defense!');
+  if(mv.effect==='buff'){
+    if(mv.name==='Harden'){
+      const gain=Math.min(3,lead._hardenCap!==undefined?(12-lead._hardenCap):3);
+      lead._hardenCap=(lead._hardenCap||0)+gain;
+      lead.def+=gain;
+      setBattleLog(gain>0?lead.name+' hardened! DEF +'+gain+'!':lead.name+"'s defense can't go higher!");
+    } else if(mv.name==='Howl'){
+      const gain=Math.min(3,lead._howlCap!==undefined?(12-lead._howlCap):3);
+      lead._howlCap=(lead._howlCap||0)+gain;
+      lead.atk+=gain;
+      setBattleLog(gain>0?lead.name+' howled! ATK +'+gain+'!':lead.name+"'s attack can't go higher!");
+    } else {
+      setBattleLog(lead.name+' raised its stats!');
+    }
+  }
   else if(mv.effect==='debuff'){setBattleLog(lead.name+' used '+mv.name+'! Enemy weakened!');battle.enemy.def=Math.max(1,battle.enemy.def-1);}
   else setBattleLog(lead.name+' used '+mv.name+'!'+(dmg?' Dealt '+dmg+' damage!':''));
   updateBattleUI();
@@ -1122,7 +1158,7 @@ function showAreaBanner(text,color){
 // ════════════════════════════════════════════════
 const canvas=document.getElementById('gameCanvas'),ctx=canvas.getContext('2d'),gameScaleEl=document.getElementById('gameScale');
 function resizeGame(){
-  const hudH=40,partyW=170,availW=Math.max(100,window.innerWidth-partyW),availH=Math.max(100,window.innerHeight-hudH);
+  const hudH=40,partyW=240,availW=Math.max(100,window.innerWidth-partyW),availH=Math.max(100,window.innerHeight-hudH);
   const scale=Math.min(availW/CANVAS_W,availH/CANVAS_H),offX=Math.floor((availW-CANVAS_W*scale)/2),offY=Math.floor((availH-CANVAS_H*scale)/2);
   canvas.style.transform=`scale(${scale})`;canvas.style.transformOrigin='top left';canvas.style.left=offX+'px';canvas.style.top=offY+'px';
   gameScaleEl.style.transform=`scale(${scale})`;gameScaleEl.style.transformOrigin='top left';gameScaleEl.style.left=offX+'px';gameScaleEl.style.top=offY+'px';
